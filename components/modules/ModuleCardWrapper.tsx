@@ -135,27 +135,18 @@ export default function ModuleCardWrapper({
     [isDragging, viewport.zoom, boardId, module.id, updateModule]
   );
 
-  // ── 포인터 업: 드래그 종료 OR 연결 드롭 ─────────────────────
+  // ── 포인터 업: 드래그 종료 ───────────────────────────────────
+  // 연결 완성은 onClick(handleClick)에서 처리 — pointerup에서 처리하면
+  // e.preventDefault()가 뒤따르는 click 이벤트를 막아 버리는 문제가 생김
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
-      // 연결 모드: 이 모듈 위에서 포인터를 놓으면 연결 완성
-      const { mode, fromModuleId: fromId } = useConnectionStore.getState();
-      if (mode === "connecting" && fromId && fromId !== module.id) {
-        e.preventDefault(); // 버튼 등 하위 클릭 방지
-        const fromMod = board?.modules.find((m) => m.id === fromId);
-        const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
-        finishConnecting(module.id, toAnchor);
-        return;
-      }
-
-      // 일반 드래그 종료
       if (!dragStartRef.current) return;
       if (dragStartRef.current.pointerId !== e.pointerId) return;
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       dragStartRef.current = null;
       setIsDragging(false);
     },
-    [module, board, finishConnecting]
+    []
   );
 
   function handleDataChange(data: Module["data"]) {
@@ -182,7 +173,7 @@ export default function ModuleCardWrapper({
     startConnecting(module.id, "right");
   }
 
-  // ── 클릭: 선택 / 더블클릭: 확장 토글 ────────────────────────
+  // ── 클릭: 연결 완성 / 선택 / 더블클릭: 확장 토글 ─────────────
   function handleClick(e: React.MouseEvent) {
     if (isDragging) return;
     const target = e.target as HTMLElement;
@@ -196,8 +187,16 @@ export default function ModuleCardWrapper({
     )
       return;
 
-    // 연결 모드 클릭 완성은 pointerUp에서 처리하므로 여기서는 스킵
-    if (useConnectionStore.getState().mode === "connecting") return;
+    // 연결 모드: 클릭한 모듈로 연결 완성
+    const { mode, fromModuleId: fromId } = useConnectionStore.getState();
+    if (mode === "connecting") {
+      if (fromId && fromId !== module.id) {
+        const fromMod = board?.modules.find((m) => m.id === fromId);
+        const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
+        finishConnecting(module.id, toAnchor);
+      }
+      return;
+    }
 
     // 더블클릭 감지
     const now = Date.now();
