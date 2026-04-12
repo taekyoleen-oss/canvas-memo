@@ -52,11 +52,11 @@ export default function ModuleCardWrapper({
   const duplicateModule = useCanvasStore((s) => s.duplicateModule);
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
 
-  const connectionMode    = useConnectionStore((s) => s.mode);
-  const fromModuleId      = useConnectionStore((s) => s.fromModuleId);
+  const connectionMode     = useConnectionStore((s) => s.mode);
+  const fromModuleId       = useConnectionStore((s) => s.fromModuleId);
   const dragSourceModuleId = useConnectionStore((s) => s.dragSourceModuleId);
-  const startConnecting   = useConnectionStore((s) => s.startConnecting);
-  const finishConnecting  = useConnectionStore((s) => s.finishConnecting);
+  const startConnecting    = useConnectionStore((s) => s.startConnecting);
+  const finishConnecting   = useConnectionStore((s) => s.finishConnecting);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -92,7 +92,7 @@ export default function ModuleCardWrapper({
         return;
       }
       // 연결 모드 중에는 드래그 이동 막기
-      if (connectionMode === "connecting") return;
+      if (useConnectionStore.getState().mode === "connecting") return;
 
       e.stopPropagation();
       if (e.button === 2) return;
@@ -106,7 +106,7 @@ export default function ModuleCardWrapper({
       };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [module.position, connectionMode]
+    [module.position]
   );
 
   const handlePointerMove = useCallback(
@@ -139,9 +139,10 @@ export default function ModuleCardWrapper({
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       // 연결 모드: 이 모듈 위에서 포인터를 놓으면 연결 완성
-      if (connectionMode === "connecting" && fromModuleId && fromModuleId !== module.id) {
+      const { mode, fromModuleId: fromId } = useConnectionStore.getState();
+      if (mode === "connecting" && fromId && fromId !== module.id) {
         e.preventDefault(); // 버튼 등 하위 클릭 방지
-        const fromMod = board?.modules.find((m) => m.id === fromModuleId);
+        const fromMod = board?.modules.find((m) => m.id === fromId);
         const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
         finishConnecting(module.id, toAnchor);
         return;
@@ -154,7 +155,7 @@ export default function ModuleCardWrapper({
       dragStartRef.current = null;
       setIsDragging(false);
     },
-    [connectionMode, fromModuleId, module, board, finishConnecting]
+    [module, board, finishConnecting]
   );
 
   function handleDataChange(data: Module["data"]) {
@@ -196,7 +197,7 @@ export default function ModuleCardWrapper({
       return;
 
     // 연결 모드 클릭 완성은 pointerUp에서 처리하므로 여기서는 스킵
-    if (connectionMode === "connecting") return;
+    if (useConnectionStore.getState().mode === "connecting") return;
 
     // 더블클릭 감지
     const now = Date.now();
