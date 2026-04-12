@@ -1,26 +1,103 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* 라이트 테마 (기본) */
+:root, [data-theme="light"] {
+  --background: #F8F7F4;
+  --canvas-grid: #E0DED8;
+  --surface: #FFFFFF;
+  --surface-hover: #F4F3F0;
+  --surface-elevated: #FFFFFF;
+  --border: #E4E2DC;
+  --border-strong: #CCCAC4;
+  --primary: #6366F1;
+  --primary-soft: #EEF2FF;
+  --primary-fg: #FFFFFF;
+  --accent: #F59E0B;
+  --danger: #EF4444;
+  --text-primary: #1C1B18;
+  --text-secondary: #6B6860;
+  --text-muted: #A8A39A;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.10);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+  --connection-default: #6366F1;
+  --module-default: #FFFFFF;
+  --module-yellow: #FEF9C3;
+  --module-pink: #FCE7F3;
+  --module-blue: #DBEAFE;
+  --module-green: #DCFCE7;
+  --module-purple: #F3E8FF;
+  --module-orange: #FFEDD5;
+  --module-teal: #CCFBF1;
+}
+
+/* 다크 테마 */
+[data-theme="dark"] {
+  --background: #111110;
+  --canvas-grid: #252422;
+  --surface: #1C1C1A;
+  --surface-hover: #242422;
+  --surface-elevated: #2A2A28;
+  --border: #2E2E2C;
+  --border-strong: #3E3E3C;
+  --primary: #818CF8;
+  --primary-soft: #1E1F3A;
+  --primary-fg: #FFFFFF;
+  --accent: #FCD34D;
+  --danger: #F87171;
+  --text-primary: #EDEDEB;
+  --text-secondary: #9B9A96;
+  --text-muted: #6B6A66;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+  --connection-default: #818CF8;
+  --module-default: #2A2A28;
+  --module-yellow: #3D3200;
+  --module-pink: #3D0A2A;
+  --module-blue: #0D2340;
+  --module-green: #0D2A1A;
+  --module-purple: #2A1040;
+  --module-orange: #3D1A00;
+  --module-teal: #003D33;
 }
 
 @theme inline {
   --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 트랜지션 — transform 제외 (드래그 부드럽게) */
+*, *::before, *::after {
+  transition:
+    background-color 200ms ease,
+    color 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background-color: var(--background);
+  color: var(--text-primary);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* 스크롤바 다크 모드 */
+[data-theme="dark"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* 텍스트 선택 색상 */
+::selection {
+  background: var(--primary-soft);
+  color: var(--primary);
 }
