@@ -17,13 +17,12 @@ export default function BottomTabBar({
 }: BottomTabBarProps) {
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 flex items-center md:hidden"
+      className="flex items-center md:hidden flex-shrink-0 w-full"
       style={{
         height: 60,
         background: "var(--surface)",
         borderTop: "1px solid var(--border)",
         boxShadow: "var(--shadow-md)",
-        zIndex: 50,
         paddingBottom: "env(safe-area-inset-bottom)",
         overflowX: "auto",
       }}
