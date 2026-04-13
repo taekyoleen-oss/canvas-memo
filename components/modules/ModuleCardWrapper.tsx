@@ -56,6 +56,7 @@ export default function ModuleCardWrapper({
   const connectionMode     = useConnectionStore((s) => s.mode);
   const fromModuleId       = useConnectionStore((s) => s.fromModuleId);
   const dragSourceModuleId = useConnectionStore((s) => s.dragSourceModuleId);
+  const startConnecting    = useConnectionStore((s) => s.startConnecting);
   const finishConnecting   = useConnectionStore((s) => s.finishConnecting);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -206,6 +207,11 @@ export default function ModuleCardWrapper({
     setIsContextMenuOpen(false);
   }
 
+  function handleStartConnect() {
+    startConnecting(module.id, "right");
+    setIsContextMenuOpen(false);
+  }
+
   // ── 클릭: 더블클릭=확장토글 / 연결완성 / 단일클릭=선택 ──────────
   function handleClick(e: React.MouseEvent) {
     if (didDragRef.current) {
@@ -340,8 +346,31 @@ export default function ModuleCardWrapper({
           />
         )}
 
-        {/* output 앵커: hover·connecting 모드·드래그 중에 표시 */}
-        {(showAnchors || isConnectingMode || isDragSource) &&
+        {/* 연결 타겟 클릭 오버레이 — 내부 버튼보다 위에 위치해 어디 클릭해도 연결 완성 */}
+        {isConnectTarget && (
+          <div
+            data-module-wrapper-id={module.id}
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 12,
+              zIndex: 25,
+              cursor: "crosshair",
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              const { fromModuleId: fromId } = useConnectionStore.getState();
+              if (fromId && fromId !== module.id) {
+                const fromMod = board?.modules.find((m) => m.id === fromId);
+                const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
+                finishConnecting(module.id, toAnchor);
+              }
+            }}
+          />
+        )}
+
+        {/* output 앵커: hover·선택·connecting 모드·드래그 중에 표시 */}
+        {(showAnchors || isSelected || isConnectingMode || isDragSource) &&
           (["top", "right", "bottom", "left"] as const).map((side) => (
             <AnchorPoint
               key={`out-${side}`}
@@ -384,6 +413,7 @@ export default function ModuleCardWrapper({
             isOpen={isContextMenuOpen}
             anchorRect={menuAnchorRect}
             onClose={() => setIsContextMenuOpen(false)}
+            onConnect={handleStartConnect}
             onColorChange={() => {
               setIsContextMenuOpen(false);
               setIsColorPaletteOpen(true);

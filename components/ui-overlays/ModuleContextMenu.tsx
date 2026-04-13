@@ -4,6 +4,7 @@ interface ModuleContextMenuProps {
   isOpen: boolean;
   anchorRect?: DOMRect | null;
   onClose: () => void;
+  onConnect: () => void;
   onColorChange: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -17,12 +18,13 @@ interface MenuItem {
 }
 
 const MENU_WIDTH = 180;
-const MENU_HEIGHT = 44 * 3; // 3 items × 44px
+const MENU_HEIGHT = 44 * 4; // 4 items × 44px
 
 export default function ModuleContextMenu({
   isOpen,
   anchorRect,
   onClose,
+  onConnect,
   onColorChange,
   onDuplicate,
   onDelete,
@@ -30,6 +32,7 @@ export default function ModuleContextMenu({
   if (!isOpen) return null;
 
   const items: MenuItem[] = [
+    { icon: "🔗", label: "연결하기", action: onConnect },
     { icon: "🎨", label: "색상 변경", action: onColorChange },
     { icon: "📋", label: "복사",     action: onDuplicate },
     { icon: "🗑",  label: "삭제",    action: onDelete, danger: true },
