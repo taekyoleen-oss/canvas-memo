@@ -9,7 +9,6 @@ interface ModuleCardProps {
   children: React.ReactNode;
   onContextMenu?: (rect: DOMRect) => void;
   onToggleExpand?: () => void;
-  onStartConnect?: () => void;
 }
 
 const COLOR_MAP: Record<ModuleColor, string> = {
@@ -37,7 +36,6 @@ export default function ModuleCard({
   children,
   onContextMenu,
   onToggleExpand,
-  onStartConnect,
 }: ModuleCardProps) {
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
 
@@ -86,57 +84,6 @@ export default function ModuleCard({
           {getModuleTitle(module)}
         </span>
 
-        {/* 연결 버튼 — 선택 시 표시 */}
-        {isSelected && !isConnectingSource && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartConnect?.();
-            }}
-            className="flex items-center justify-center rounded"
-            style={{
-              width: 26,
-              height: 26,
-              background: "var(--primary-soft)",
-              border: "1px solid var(--primary)",
-              cursor: "pointer",
-              color: "var(--primary)",
-              fontSize: 12,
-              flexShrink: 0,
-              fontWeight: 700,
-            }}
-            aria-label="연결하기"
-            title="다른 모듈과 연결 (Connect)"
-          >
-            ⟶
-          </button>
-        )}
-
-        {/* 더보기/접기 토글 — 헤더 안 */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleExpand?.();
-          }}
-          className="flex items-center justify-center rounded"
-          style={{
-            width: 26,
-            height: 26,
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--text-muted)",
-            fontSize: 13,
-            flexShrink: 0,
-            transition: "transform 0.2s",
-            transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)",
-          }}
-          aria-label={module.isExpanded ? "접기" : "더보기"}
-          title={module.isExpanded ? "접기" : "더보기"}
-        >
-          ▾
-        </button>
-
         {/* 메뉴 버튼 */}
         <button
           onClick={(e) => {
@@ -163,6 +110,37 @@ export default function ModuleCard({
 
       {/* 내용 */}
       <div className="flex flex-col">{children}</div>
+
+      {/* 펼치기/접기 탭 */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleExpand?.();
+        }}
+        className="flex items-center justify-center gap-1 w-full"
+        style={{
+          height: 28,
+          background: "transparent",
+          border: "none",
+          borderTop: "1px solid var(--border)",
+          cursor: "pointer",
+          color: "var(--text-muted)",
+          fontSize: 11,
+          flexShrink: 0,
+          transition: "background 0.12s",
+        }}
+        onMouseEnter={(e) =>
+          ((e.currentTarget as HTMLElement).style.background =
+            "var(--surface-hover)")
+        }
+        onMouseLeave={(e) =>
+          ((e.currentTarget as HTMLElement).style.background = "transparent")
+        }
+        aria-label={module.isExpanded ? "접기" : "더보기"}
+      >
+        <span style={{ transition: "transform 0.2s", display: "inline-block", transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+        <span>{module.isExpanded ? "접기" : "더보기"}</span>
+      </button>
     </div>
   );
 }

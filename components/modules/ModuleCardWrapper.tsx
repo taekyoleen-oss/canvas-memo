@@ -56,7 +56,6 @@ export default function ModuleCardWrapper({
   const connectionMode     = useConnectionStore((s) => s.mode);
   const fromModuleId       = useConnectionStore((s) => s.fromModuleId);
   const dragSourceModuleId = useConnectionStore((s) => s.dragSourceModuleId);
-  const startConnecting    = useConnectionStore((s) => s.startConnecting);
   const finishConnecting   = useConnectionStore((s) => s.finishConnecting);
 
   const [isDragging, setIsDragging] = useState(false);
@@ -207,11 +206,7 @@ export default function ModuleCardWrapper({
     setIsContextMenuOpen(false);
   }
 
-  function handleStartConnect() {
-    startConnecting(module.id, "right");
-  }
-
-  // ── 클릭: 연결 완성 / 선택 / 더블클릭(e.detail===2): 확장 토글 ──
+  // ── 클릭: 더블클릭=확장토글 / 연결완성 / 단일클릭=선택 ──────────
   function handleClick(e: React.MouseEvent) {
     if (didDragRef.current) {
       didDragRef.current = false;
@@ -230,6 +225,12 @@ export default function ModuleCardWrapper({
       return;
     }
 
+    // 더블클릭 → 확장 토글 (connecting 모드와 무관하게 최우선)
+    if (e.detail === 2) {
+      handleToggleExpand();
+      return;
+    }
+
     // 연결 모드: 클릭한 모듈로 연결 완성
     const { mode, fromModuleId: fromId } = useConnectionStore.getState();
     if (mode === "connecting") {
@@ -238,13 +239,6 @@ export default function ModuleCardWrapper({
         const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
         finishConnecting(module.id, toAnchor);
       }
-      return;
-    }
-
-    // 더블클릭 → 확장 토글
-    if (e.detail === 2) {
-      console.log("[DBG] double-click → toggleExpand");
-      handleToggleExpand();
       return;
     }
 
@@ -378,7 +372,6 @@ export default function ModuleCardWrapper({
             setIsContextMenuOpen(true);
           }}
           onToggleExpand={handleToggleExpand}
-          onStartConnect={handleStartConnect}
         >
           {renderModuleContent()}
         </ModuleCard>
