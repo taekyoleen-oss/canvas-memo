@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 import { Board, Module, Connection } from "@/types";
 import { loadAppData, createDebouncedSave } from "@/lib/storage";
+import { createClient } from "@/lib/supabase/client";
 
 interface CanvasStore {
   boards: Board[];
@@ -38,16 +39,80 @@ interface CanvasStore {
   // 뷰포트
   updateViewport(boardId: string, viewport: Board["viewport"]): void;
 
-  // 스토어 초기화 (localStorage에서 로드)
+  // 초기화
   hydrate(): void;
+  // Supabase에서 유저 데이터 로드 (로그인 후 호출)
+  hydrateFromSupabase(userId: string): Promise<void>;
+  // Supabase에 전체 상태 업서트 (필요 시 수동 호출)
+  syncToSupabase(userId: string): Promise<void>;
 }
 
-// 자동저장 함수 (스토어 외부에서 debounce 인스턴스 유지)
 let debouncedSave: (() => void) | null = null;
+let debouncedSupabaseSync: (() => void) | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
 }
+
+// ── Supabase 동기화 헬퍼 ─────────────────────────────────────────────────
+
+async function pushBoardToSupabase(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  board: Board
+) {
+  // boards upsert
+  await supabase.from("boards").upsert({
+    id: board.id,
+    user_id: userId,
+    name: board.name,
+    icon: board.icon,
+    color: board.color,
+    viewport: board.viewport,
+    created_at: board.createdAt,
+    updated_at: board.updatedAt,
+  });
+
+  // modules upsert
+  if (board.modules.length > 0) {
+    await supabase.from("modules").upsert(
+      board.modules.map((m) => ({
+        id: m.id,
+        board_id: board.id,
+        user_id: userId,
+        type: m.type,
+        position: m.position,
+        size: m.size,
+        z_index: m.zIndex,
+        color: m.color,
+        is_expanded: m.isExpanded,
+        data: m.data,
+        created_at: m.createdAt,
+        updated_at: m.updatedAt,
+      }))
+    );
+  }
+
+  // connections upsert
+  if (board.connections.length > 0) {
+    await supabase.from("connections").upsert(
+      board.connections.map((c) => ({
+        id: c.id,
+        board_id: board.id,
+        user_id: userId,
+        from_module_id: c.fromModuleId,
+        to_module_id: c.toModuleId,
+        from_anchor: c.fromAnchor,
+        to_anchor: c.toAnchor,
+        label: c.label,
+        style: c.style,
+        color: c.color,
+      }))
+    );
+  }
+}
+
+// ── 스토어 ───────────────────────────────────────────────────────────────
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
   boards: [],
@@ -62,7 +127,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       activeBoardId: appData.lastOpenedBoardId ?? null,
     });
 
-    // debounced save 초기화
     debouncedSave = createDebouncedSave(() => {
       const state = get();
       return {
@@ -74,7 +138,88 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
   },
 
-  // ─── 보드 CRUD ───────────────────────────────────────────────────────────
+  async hydrateFromSupabase(userId: string) {
+    const supabase = createClient();
+
+    const { data: boardRows } = await supabase
+      .from("boards")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    if (!boardRows || boardRows.length === 0) {
+      // 로그인 첫 사용: localStorage 데이터를 Supabase로 마이그레이션
+      const state = get();
+      if (state.boards.length > 0) {
+        await get().syncToSupabase(userId);
+      }
+      return;
+    }
+
+    const { data: moduleRows } = await supabase
+      .from("modules")
+      .select("*")
+      .eq("user_id", userId);
+
+    const { data: connectionRows } = await supabase
+      .from("connections")
+      .select("*")
+      .eq("user_id", userId);
+
+    const boards: Board[] = boardRows.map((b) => ({
+      id: b.id,
+      name: b.name,
+      icon: b.icon,
+      color: b.color,
+      viewport: b.viewport as Board["viewport"],
+      createdAt: b.created_at,
+      updatedAt: b.updated_at,
+      modules: (moduleRows ?? [])
+        .filter((m) => m.board_id === b.id)
+        .map((m) => ({
+          id: m.id,
+          type: m.type as Module["type"],
+          position: m.position as Module["position"],
+          size: m.size as Module["size"],
+          zIndex: m.z_index,
+          color: m.color as Module["color"],
+          isExpanded: m.is_expanded,
+          data: m.data as Module["data"],
+          createdAt: m.created_at,
+          updatedAt: m.updated_at,
+        })),
+      connections: (connectionRows ?? [])
+        .filter((c) => c.board_id === b.id)
+        .map((c) => ({
+          id: c.id,
+          fromModuleId: c.from_module_id,
+          toModuleId: c.to_module_id,
+          fromAnchor: c.from_anchor as Connection["fromAnchor"],
+          toAnchor: c.to_anchor as Connection["toAnchor"],
+          label: c.label,
+          style: c.style as Connection["style"],
+          color: c.color,
+        })),
+    }));
+
+    set({
+      boards,
+      activeBoardId: boards[0]?.id ?? null,
+    });
+
+    // Supabase 기준 데이터로 localStorage도 갱신
+    debouncedSave?.();
+  },
+
+  async syncToSupabase(userId: string) {
+    const supabase = createClient();
+    const { boards } = get();
+    for (const board of boards) {
+      await pushBoardToSupabase(supabase, userId, board);
+    }
+  },
+
+  // ─── 보드 CRUD ─────────────────────────────────────────────────────────
 
   addBoard(boardInput) {
     const now = getTimestamp();
@@ -94,6 +239,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   removeBoard(boardId) {
@@ -108,6 +254,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
 
     debouncedSave?.();
+    // 삭제는 즉시 처리 (RLS cascade가 처리)
+    createClient().from("boards").delete().eq("id", boardId).then(() => {});
   },
 
   updateBoard(boardId, updates) {
@@ -120,6 +268,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   setActiveBoard(boardId) {
@@ -127,7 +276,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     debouncedSave?.();
   },
 
-  // ─── 모듈 CRUD ───────────────────────────────────────────────────────────
+  // ─── 모듈 CRUD ─────────────────────────────────────────────────────────
 
   addModule(boardId, moduleInput) {
     const now = getTimestamp();
@@ -151,6 +300,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   removeModule(boardId, moduleId) {
@@ -160,7 +310,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           ? {
               ...b,
               modules: b.modules.filter((m) => m.id !== moduleId),
-              // 해당 모듈과 연결된 커넥션도 함께 제거
               connections: b.connections.filter(
                 (c) =>
                   c.fromModuleId !== moduleId && c.toModuleId !== moduleId
@@ -172,6 +321,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    createClient().from("modules").delete().eq("id", moduleId).then(() => {});
   },
 
   updateModule(boardId, moduleId, updates) {
@@ -192,6 +342,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   duplicateModule(boardId, moduleId) {
@@ -218,7 +369,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           y: source.position.y + 20,
         },
         zIndex: maxZIndex + 1,
-        data: JSON.parse(JSON.stringify(source.data)), // 깊은 복사
+        data: JSON.parse(JSON.stringify(source.data)),
       };
 
       return {
@@ -235,9 +386,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
-  // ─── 커넥션 CRUD ─────────────────────────────────────────────────────────
+  // ─── 커넥션 CRUD ───────────────────────────────────────────────────────
 
   addConnection(boardId, connectionInput) {
     const newConnection: Connection = {
@@ -258,6 +410,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   removeConnection(boardId, connectionId) {
@@ -274,9 +427,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    createClient().from("connections").delete().eq("id", connectionId).then(() => {});
   },
 
-  // ─── 뷰포트 ──────────────────────────────────────────────────────────────
+  // ─── 뷰포트 ────────────────────────────────────────────────────────────
 
   updateViewport(boardId, viewport) {
     set((state) => ({
@@ -286,5 +440,22 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 }));
+
+// ── Supabase debounced sync 초기화 (유저 로그인 시 호출) ─────────────────
+
+export function initSupabaseSync(userId: string) {
+  debouncedSupabaseSync = debounce(() => {
+    useCanvasStore.getState().syncToSupabase(userId);
+  }, 1000);
+}
+
+function debounce(fn: () => void, ms: number) {
+  let timer: ReturnType<typeof setTimeout>;
+  return () => {
+    clearTimeout(timer);
+    timer = setTimeout(fn, ms);
+  };
+}

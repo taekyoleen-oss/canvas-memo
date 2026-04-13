@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { Board } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
+import { useAuthStore } from "@/store/auth";
 import ThemeToggle from "@/components/ui-overlays/ThemeToggle";
 
 interface SidebarProps {
@@ -24,6 +25,7 @@ export default function Sidebar({
   const editInputRef = useRef<HTMLInputElement>(null);
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
+  const { user, signOut } = useAuthStore();
 
   function startEdit(board: Board, e: React.MouseEvent) {
     e.stopPropagation();
@@ -255,22 +257,110 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* 하단 테마 토글 */}
+      {/* 하단: 유저 + 테마 토글 */}
       <div
-        className="flex items-center flex-shrink-0"
-        style={{
-          borderTop: "1px solid var(--border)",
-          padding: isExpanded ? "12px 16px" : "12px 0",
-          justifyContent: isExpanded ? "flex-start" : "center",
-          gap: 8,
-        }}
+        className="flex flex-col flex-shrink-0"
+        style={{ borderTop: "1px solid var(--border)" }}
       >
-        <ThemeToggle />
-        {isExpanded && (
-          <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            테마 전환
-          </span>
+        {/* 유저 섹션 */}
+        {user ? (
+          <div
+            className="flex items-center"
+            style={{
+              padding: isExpanded ? "10px 12px" : "10px 0",
+              justifyContent: isExpanded ? "space-between" : "center",
+              gap: 8,
+            }}
+          >
+            <div
+              className="flex items-center gap-2 overflow-hidden"
+              style={{ minWidth: 0, flex: 1 }}
+            >
+              <div
+                className="flex items-center justify-center rounded-full flex-shrink-0"
+                style={{
+                  width: 30,
+                  height: 30,
+                  background: "var(--primary-soft)",
+                  fontSize: 14,
+                }}
+              >
+                👤
+              </div>
+              {isExpanded && (
+                <span
+                  className="truncate"
+                  style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                >
+                  {user.email}
+                </span>
+              )}
+            </div>
+            {isExpanded && (
+              <button
+                onClick={signOut}
+                className="flex-shrink-0 rounded"
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                  padding: "4px 6px",
+                }}
+                title="로그아웃"
+              >
+                로그아웃
+              </button>
+            )}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: isExpanded ? "10px 12px" : "10px 0",
+              display: "flex",
+              justifyContent: isExpanded ? "flex-start" : "center",
+            }}
+          >
+            <a
+              href="/auth/login"
+              className="flex items-center gap-2 rounded-lg"
+              style={{
+                height: 36,
+                padding: isExpanded ? "0 12px" : "0 8px",
+                background: "var(--primary-soft)",
+                border: "1px solid var(--primary)",
+                color: "var(--primary)",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>🔑</span>
+              {isExpanded && <span>로그인</span>}
+            </a>
+          </div>
         )}
+
+        {/* 테마 토글 */}
+        <div
+          className="flex items-center"
+          style={{
+            borderTop: "1px solid var(--border)",
+            padding: isExpanded ? "12px 16px" : "12px 0",
+            justifyContent: isExpanded ? "flex-start" : "center",
+            gap: 8,
+          }}
+        >
+          <ThemeToggle />
+          {isExpanded && (
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              테마 전환
+            </span>
+          )}
+        </div>
       </div>
     </aside>
   );

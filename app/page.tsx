@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useCanvasStore } from "@/store/canvas";
+import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
+import { useAuthStore } from "@/store/auth";
 import TopHeader from "@/components/layout/TopHeader";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import Sidebar from "@/components/layout/Sidebar";
@@ -124,13 +125,23 @@ function AddBoardDialog({ isOpen, onClose, onConfirm }: AddBoardDialogProps) {
 }
 
 export default function Home() {
-  const { boards, activeBoardId, addBoard, addModule, setActiveBoard, hydrate } =
+  const { boards, activeBoardId, addBoard, addModule, setActiveBoard, hydrate, hydrateFromSupabase } =
     useCanvasStore();
+  const { user, init: initAuth } = useAuthStore();
   const [showAddBoard, setShowAddBoard] = useState(false);
 
+  // auth 초기화 (1회)
+  useEffect(() => { initAuth(); }, [initAuth]);
+
+  // localStorage에서 초기 로드
+  useEffect(() => { hydrate(); }, [hydrate]);
+
+  // 로그인 상태가 되면 Supabase 데이터로 교체
   useEffect(() => {
-    hydrate();
-  }, [hydrate]);
+    if (!user) return;
+    initSupabaseSync(user.id);
+    hydrateFromSupabase(user.id);
+  }, [user, hydrateFromSupabase]);
 
   const activeBoard = boards.find((b) => b.id === activeBoardId);
 
