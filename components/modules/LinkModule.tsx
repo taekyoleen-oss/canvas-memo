@@ -32,18 +32,6 @@ export default function LinkModule({
   if (!isExpanded) {
     return (
       <div className="px-3 py-2 flex flex-col gap-1">
-        <div className="flex items-center gap-1.5">
-          {data.favicon && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={data.favicon} alt="favicon" width={14} height={14} />
-          )}
-          <p
-            className="text-sm font-medium truncate"
-            style={{ color: "var(--text-primary)" }}
-          >
-            {data.title || data.url || "URL 없음"}
-          </p>
-        </div>
         {data.url && (
           <p
             className="text-xs truncate"
@@ -121,15 +109,6 @@ export default function LinkModule({
             className="w-full h-full object-cover"
           />
         </div>
-      )}
-
-      {data.title && (
-        <p
-          className="text-sm font-medium"
-          style={{ color: "var(--text-primary)" }}
-        >
-          {data.title}
-        </p>
       )}
 
       {data.description && (

@@ -129,12 +129,16 @@ export default function Home() {
     useCanvasStore();
   const { user, init: initAuth } = useAuthStore();
   const [showAddBoard, setShowAddBoard] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
   // auth 초기화 (1회)
   useEffect(() => { initAuth(); }, [initAuth]);
 
-  // localStorage에서 초기 로드
-  useEffect(() => { hydrate(); }, [hydrate]);
+  // localStorage에서 초기 로드 — 완료 전에는 빈 화면으로 hydration mismatch 방지
+  useEffect(() => {
+    hydrate();
+    setHydrated(true);
+  }, [hydrate]);
 
   // 로그인 상태가 되면 Supabase 데이터로 교체
   useEffect(() => {
@@ -175,6 +179,11 @@ export default function Home() {
       isExpanded: false,
       data: defaultData,
     });
+  }
+
+  // hydration 완료 전: 빈 화면으로 SSR mismatch 방지 (깜빡임 없이 즉시 전환)
+  if (!hydrated) {
+    return <div style={{ width: "100%", height: "100dvh", background: "var(--background)" }} />;
   }
 
   // 온보딩 화면 (보드 없음)

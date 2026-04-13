@@ -31,12 +31,6 @@ export default function ImageModule({
   if (!isExpanded) {
     return (
       <div className="px-3 py-2 flex flex-col gap-1">
-        <p
-          className="text-sm font-medium"
-          style={{ color: "var(--text-primary)" }}
-        >
-          {data.title || "제목 없음"}
-        </p>
         {data.src ? (
           <div
             className="rounded overflow-hidden"
@@ -67,21 +61,6 @@ export default function ImageModule({
 
   return (
     <div className="px-3 py-2 flex flex-col gap-2">
-      <input
-        type="text"
-        value={data.title}
-        onChange={(e) => onChange({ ...data, title: e.target.value })}
-        placeholder="제목"
-        className="text-sm font-medium rounded px-2"
-        style={{
-          height: 36,
-          background: "transparent",
-          border: "1px solid var(--border)",
-          color: "var(--text-primary)",
-          outline: "none",
-        }}
-      />
-
       {data.src ? (
         <div className="relative rounded overflow-hidden" style={{ height: 160 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}

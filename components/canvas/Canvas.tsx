@@ -453,8 +453,8 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
 
     const MODULE_W = 260;
     const COLLAPSED_H = 68;   // 접힌 카드 높이 기준
-    const GAP_X = 32;
-    const GAP_Y = 24;
+    const GAP_X = 56;
+    const GAP_Y = 64;
     const START_X = 40;
     const START_Y = 40;
 
@@ -591,7 +591,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         }}
       >
         {/* 그룹 배경 레이어 (모듈 아래) */}
-        <GroupLayer boardId={boardId} />
+        <GroupLayer boardId={boardId} viewport={viewport} />
 
         {/* 모듈 — 접힌 그룹에 속한 것은 숨김 */}
         {board.modules

@@ -140,24 +140,22 @@ export default function ZoomControls({
           ⊞
         </button>
 
-        {/* 그룹 만들기 */}
-        {onGroupMode && (
-          <button
-            onClick={onGroupMode}
-            style={{
-              ...btnStyle,
-              fontSize: 14,
-              background: isGroupMode ? "var(--primary-soft)" : "transparent",
-              color: isGroupMode ? "var(--primary)" : "var(--text-primary)",
-              border: isGroupMode ? "1px solid var(--primary)" : "none",
-              borderRadius: 6,
-            }}
-            aria-label="그룹 만들기"
-            title="그룹 만들기 — 드래그로 여러 모듈을 묶습니다"
-          >
-            📦
-          </button>
-        )}
+        {/* 그룹 만들기 — 항상 렌더링하여 레이아웃 안정 */}
+        <button
+          onClick={onGroupMode}
+          style={{
+            ...btnStyle,
+            fontSize: 14,
+            background: isGroupMode ? "var(--primary-soft)" : "transparent",
+            color: isGroupMode ? "var(--primary)" : "var(--text-primary)",
+            border: isGroupMode ? "1px solid var(--primary)" : "none",
+            borderRadius: 6,
+          }}
+          aria-label="그룹 만들기"
+          title="그룹 만들기 — 드래그로 여러 모듈을 묶습니다"
+        >
+          📦
+        </button>
 
         <div
           style={{
@@ -168,17 +166,15 @@ export default function ZoomControls({
           }}
         />
 
-        {/* 테마 토글 */}
-        {mounted && (
-          <button
-            onClick={() => setTheme(isDark ? "light" : "dark")}
-            style={{ ...btnStyle, fontSize: 15 }}
-            aria-label={isDark ? "라이트 모드" : "다크 모드"}
-            title={isDark ? "라이트 모드로 전환" : "다크 모드로 전환"}
-          >
-            {isDark ? "☀️" : "🌙"}
-          </button>
-        )}
+        {/* 테마 토글 — 항상 자리 확보하여 레이아웃 흔들림 방지 */}
+        <button
+          onClick={() => mounted && setTheme(isDark ? "light" : "dark")}
+          style={{ ...btnStyle, fontSize: 15, opacity: mounted ? 1 : 0, pointerEvents: mounted ? "auto" : "none" }}
+          aria-label={isDark ? "라이트 모드" : "다크 모드"}
+          title={isDark ? "라이트 모드로 전환" : "다크 모드로 전환"}
+        >
+          {isDark ? "☀️" : "🌙"}
+        </button>
       </div>
 
       <style>{`

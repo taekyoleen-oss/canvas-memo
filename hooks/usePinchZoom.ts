@@ -62,6 +62,15 @@ export function usePinchZoom(
         lastTouchMidRef.current = getTouchMidpoint(e.touches);
         isPanningRef.current = false;
       } else if (e.touches.length === 1) {
+        // 모듈 또는 그룹 위에서 시작한 단일 터치는 캔버스 패닝 금지
+        const target = e.target as HTMLElement;
+        const onDraggable =
+          !!target.closest("[data-module-wrapper-id]") ||
+          !!target.closest("[data-group-draggable]");
+        if (onDraggable) {
+          isPanningRef.current = false;
+          return;
+        }
         lastPanPosRef.current = {
           x: e.touches[0].clientX,
           y: e.touches[0].clientY,

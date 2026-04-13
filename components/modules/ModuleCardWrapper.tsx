@@ -191,6 +191,10 @@ export default function ModuleCardWrapper({
     updateModule(boardId, module.id, { data });
   }
 
+  function handleTitleChange(title: string) {
+    updateModule(boardId, module.id, { data: { ...module.data, title } });
+  }
+
   function handleToggleExpand() {
     updateModule(boardId, module.id, { isExpanded: !module.isExpanded });
   }
@@ -401,6 +405,7 @@ export default function ModuleCardWrapper({
             setIsContextMenuOpen(true);
           }}
           onToggleExpand={handleToggleExpand}
+          onTitleChange={handleTitleChange}
         >
           {renderModuleContent()}
         </ModuleCard>

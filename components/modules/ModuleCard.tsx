@@ -9,6 +9,7 @@ interface ModuleCardProps {
   children: React.ReactNode;
   onContextMenu?: (rect: DOMRect) => void;
   onToggleExpand?: () => void;
+  onTitleChange?: (title: string) => void;
 }
 
 const COLOR_MAP: Record<ModuleColor, string> = {
@@ -36,6 +37,7 @@ export default function ModuleCard({
   children,
   onContextMenu,
   onToggleExpand,
+  onTitleChange,
 }: ModuleCardProps) {
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
 
@@ -72,17 +74,34 @@ export default function ModuleCard({
         className="flex items-center gap-2 px-3"
         style={{
           height: 44,
-          borderBottom: module.isExpanded ? "1px solid var(--border)" : "none",
+          borderBottom: "1px solid var(--border)",
           flexShrink: 0,
         }}
       >
         <span style={{ fontSize: 15 }}>{MODULE_TYPE_ICON[module.type]}</span>
-        <span
-          className="flex-1 font-medium truncate text-sm"
-          style={{ color: "var(--text-primary)" }}
-        >
-          {getModuleTitle(module)}
-        </span>
+        {module.isExpanded && onTitleChange ? (
+          <input
+            type="text"
+            value={(module.data as { title?: string }).title ?? ""}
+            onChange={(e) => onTitleChange(e.target.value)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="제목"
+            className="flex-1 text-sm font-medium bg-transparent outline-none min-w-0"
+            style={{
+              color: "var(--text-primary)",
+              border: "none",
+              padding: 0,
+            }}
+          />
+        ) : (
+          <span
+            className="flex-1 font-medium truncate text-sm"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {getModuleTitle(module)}
+          </span>
+        )}
 
         {/* 메뉴 버튼 */}
         <button

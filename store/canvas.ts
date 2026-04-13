@@ -130,18 +130,29 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   hydrate() {
     const appData = loadAppData();
-    if (!appData) return;
+    if (!appData) {
+      // localStorage 없으면 debouncedSave만 초기화
+      debouncedSave = createDebouncedSave(() => {
+        const state = get();
+        return { version: 1, theme: "system", boards: state.boards, lastOpenedBoardId: state.activeBoardId };
+      });
+      return;
+    }
 
-    // 기존 데이터에 groups 필드가 없으면 빈 배열로 보정
+    // groups 필드 보정
     const boards = (appData.boards ?? []).map((b) => ({
       ...b,
       groups: (b as Board & { groups?: Group[] }).groups ?? [],
     }));
 
-    set({
-      boards,
-      activeBoardId: appData.lastOpenedBoardId ?? null,
-    });
+    // 마지막 열었던 보드 복원 (보드가 실제로 존재하는지 확인)
+    const savedId = appData.lastOpenedBoardId;
+    const activeBoardId =
+      (savedId && boards.find((b) => b.id === savedId))
+        ? savedId
+        : boards[0]?.id ?? null;
+
+    set({ boards, activeBoardId });
 
     debouncedSave = createDebouncedSave(() => {
       const state = get();
@@ -219,9 +230,16 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       groups: [],
     }));
 
+    // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
+    const currentActiveBoardId = get().activeBoardId;
+    const restoredId =
+      (currentActiveBoardId && boards.find((b) => b.id === currentActiveBoardId))
+        ? currentActiveBoardId
+        : boards[0]?.id ?? null;
+
     set({
       boards,
-      activeBoardId: boards[0]?.id ?? null,
+      activeBoardId: restoredId,
     });
 
     // Supabase 기준 데이터로 localStorage도 갱신

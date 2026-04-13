@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import Image from "next/image";
+import { useRef, useState } from "react";
 import { useCanvasStore } from "@/store/canvas";
 import type { Group, GroupColor } from "@/types";
 
@@ -23,16 +22,29 @@ const FOLDER_H = 76;
 
 interface GroupLayerProps {
   boardId: string;
+  viewport: { x: number; y: number; zoom: number };
   onDoubleClickGroup?: (groupId: string) => void;
 }
 
-export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerProps) {
+export default function GroupLayer({ boardId, viewport, onDoubleClickGroup }: GroupLayerProps) {
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const updateGroup = useCanvasStore((s) => s.updateGroup);
+  const updateModule = useCanvasStore((s) => s.updateModule);
   const removeGroup = useCanvasStore((s) => s.removeGroup);
 
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+
+  // 드래그 상태
+  const dragRef = useRef<{
+    groupId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origGroupX: number;
+    origGroupY: number;
+    origModulePositions: { id: string; x: number; y: number }[];
+  } | null>(null);
 
   const groups = board?.groups ?? [];
   if (groups.length === 0) return null;
@@ -57,6 +69,59 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
     setEditingGroupId(null);
   }
 
+  function handleDragStart(e: React.PointerEvent, g: Group) {
+    // 편집 중이거나 버튼 클릭이면 무시
+    if (editingGroupId === g.id) return;
+    const target = e.target as HTMLElement;
+    if (target.tagName === "BUTTON" || target.closest("button") || target.tagName === "INPUT") return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    const modules = board?.modules ?? [];
+    const memberModules = modules.filter((m) => g.moduleIds.includes(m.id));
+
+    dragRef.current = {
+      groupId: g.id,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origGroupX: g.position.x,
+      origGroupY: g.position.y,
+      origModulePositions: memberModules.map((m) => ({
+        id: m.id,
+        x: m.position.x,
+        y: m.position.y,
+      })),
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function handleDragMove(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    if (dragRef.current.pointerId !== e.pointerId) return;
+
+    const dx = (e.clientX - dragRef.current.startX) / viewport.zoom;
+    const dy = (e.clientY - dragRef.current.startY) / viewport.zoom;
+
+    const { groupId, origGroupX, origGroupY, origModulePositions } = dragRef.current;
+
+    updateGroup(boardId, groupId, {
+      position: { x: origGroupX + dx, y: origGroupY + dy },
+    });
+
+    origModulePositions.forEach(({ id, x, y }) => {
+      updateModule(boardId, id, { position: { x: x + dx, y: y + dy } });
+    });
+  }
+
+  function handleDragEnd(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    if (dragRef.current.pointerId !== e.pointerId) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    dragRef.current = null;
+  }
+
   return (
     <>
       {groups.map((g) => {
@@ -66,8 +131,6 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
           // ── 폴더 아이콘 (접힌 상태) ────────────────────────────────────
           const col = colorDef.folderCol;
           const row = colorDef.folderRow;
-          // 스프라이트 오프셋: 캔버스 좌표에서 px를 쓸 때는 zoom-scaled이므로
-          // FOLDER_W × SPRITE_COLS = 전체 이미지 렌더 너비
           const bgSizeW = FOLDER_W * SPRITE_COLS;
           const bgSizeH = FOLDER_H * SPRITE_ROWS;
           const bgPosX = -(col * FOLDER_W);
@@ -82,10 +145,16 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                 top: g.position.y,
                 width: FOLDER_W + 20,
                 textAlign: "center",
-                cursor: "pointer",
+                cursor: dragRef.current?.groupId === g.id ? "grabbing" : "grab",
                 userSelect: "none",
                 zIndex: 5,
+                touchAction: "none",
               }}
+              data-group-draggable="true"
+              onPointerDown={(e) => handleDragStart(e, g)}
+              onPointerMove={handleDragMove}
+              onPointerUp={handleDragEnd}
+              onPointerCancel={handleDragEnd}
               onDoubleClick={() => handleExpand(g.id)}
               title={`${g.name} — 더블클릭하면 펼쳐집니다`}
             >
@@ -115,6 +184,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                     e.stopPropagation();
                   }}
                   onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   style={{
                     fontSize: 11,
                     width: FOLDER_W + 20,
@@ -154,7 +224,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
         }
 
         // ── 확장된 그룹 배경 rect ──────────────────────────────────────
-        const PAD = 16; // 모듈 바깥 여백
+        const PAD = 16;
         return (
           <div
             key={g.id}
@@ -171,7 +241,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
               pointerEvents: "none",
             }}
           >
-            {/* 그룹 헤더 */}
+            {/* 그룹 헤더 — 드래그 가능 */}
             <div
               style={{
                 position: "absolute",
@@ -182,7 +252,15 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                 alignItems: "center",
                 gap: 6,
                 pointerEvents: "all",
+                cursor: "grab",
+                touchAction: "none",
+                userSelect: "none",
               }}
+              data-group-draggable="true"
+              onPointerDown={(e) => handleDragStart(e, g)}
+              onPointerMove={handleDragMove}
+              onPointerUp={handleDragEnd}
+              onPointerCancel={handleDragEnd}
             >
               <span style={{ fontSize: 14 }}>📁</span>
               {editingGroupId === g.id ? (
@@ -197,6 +275,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                     e.stopPropagation();
                   }}
                   onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   style={{
                     fontSize: 13,
                     fontWeight: 600,
@@ -217,7 +296,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                     fontWeight: 600,
                     color: "var(--text-primary)",
                     flex: 1,
-                    cursor: "text",
+                    cursor: "grab",
                   }}
                   onDoubleClick={(e) => startRename(g, e)}
                   title="더블클릭하여 이름 수정"
@@ -242,6 +321,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                 }}
                 title="폴더로 접기"
                 onClick={() => handleCollapse(g.id)}
+                onPointerDown={(e) => e.stopPropagation()}
               >
                 ▾
               </button>
@@ -261,6 +341,7 @@ export default function GroupLayer({ boardId, onDoubleClickGroup }: GroupLayerPr
                   justifyContent: "center",
                 }}
                 title="그룹 해제"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => {
                   if (confirm(`"${g.name}" 그룹을 해제할까요? (모듈은 유지됩니다)`)) {
                     removeGroup(boardId, g.id);
