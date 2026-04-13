@@ -16,6 +16,8 @@ interface ZoomControlsProps {
   onFit: () => void;
   onAutoLayout: () => void;
   isConnecting: boolean;
+  isGroupMode?: boolean;
+  onGroupMode?: () => void;
 }
 
 export default function ZoomControls({
@@ -25,6 +27,8 @@ export default function ZoomControls({
   onFit,
   onAutoLayout,
   isConnecting,
+  isGroupMode,
+  onGroupMode,
 }: ZoomControlsProps) {
   const zoomPercent = Math.round(viewport.zoom * 100);
   const { resolvedTheme, setTheme } = useTheme();
@@ -58,7 +62,7 @@ export default function ZoomControls({
         flexDirection: "column",
         alignItems: "flex-start",
         gap: 6,
-        zIndex: 20,
+        zIndex: 80,   // 라소 오버레이(60)보다 높게 → 어떤 모드에서도 항상 위에 표시
       }}
     >
       {/* 연결 모드 힌트 배너 */}
@@ -135,6 +139,25 @@ export default function ZoomControls({
         >
           ⊞
         </button>
+
+        {/* 그룹 만들기 */}
+        {onGroupMode && (
+          <button
+            onClick={onGroupMode}
+            style={{
+              ...btnStyle,
+              fontSize: 14,
+              background: isGroupMode ? "var(--primary-soft)" : "transparent",
+              color: isGroupMode ? "var(--primary)" : "var(--text-primary)",
+              border: isGroupMode ? "1px solid var(--primary)" : "none",
+              borderRadius: 6,
+            }}
+            aria-label="그룹 만들기"
+            title="그룹 만들기 — 드래그로 여러 모듈을 묶습니다"
+          >
+            📦
+          </button>
+        )}
 
         <div
           style={{

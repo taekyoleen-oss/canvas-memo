@@ -13,6 +13,11 @@ interface SidebarProps {
   onAdd: () => void;
 }
 
+const GROUP_COLOR_DOT: Record<string, string> = {
+  yellow: "#fbbf24", pink: "#ec4899", teal: "#14b8a6",
+  blue: "#6366f1", purple: "#a855f7", orange: "#f97316",
+};
+
 export default function Sidebar({
   boards,
   activeBoardId,
@@ -25,6 +30,8 @@ export default function Sidebar({
   const editInputRef = useRef<HTMLInputElement>(null);
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
+  const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
+  const updateGroup = useCanvasStore((s) => s.updateGroup);
   const { user, signOut } = useAuthStore();
 
   function startEdit(board: Board, e: React.MouseEvent) {
@@ -110,119 +117,196 @@ export default function Sidebar({
       >
         {boards.map((board) => {
           const isActive = board.id === activeBoardId;
+          const groups = board.groups ?? [];
           return (
-            <div
-              key={board.id}
-              className="group relative flex items-center rounded-lg"
-              style={{
-                minHeight: 44,
-                background: isActive ? "var(--primary-soft)" : "transparent",
-                border: isActive
-                  ? "1px solid var(--primary)"
-                  : "1px solid transparent",
-                cursor: "pointer",
-                transition: "background 150ms",
-                padding: isExpanded ? "0 8px" : "0",
-                justifyContent: isExpanded ? "flex-start" : "center",
-              }}
-              onClick={() => onSelect(board.id)}
-            >
-              {/* 이모지 */}
-              <span
+            <div key={board.id}>
+              {/* 보드 아이템 */}
+              <div
+                className="group relative flex items-center rounded-lg"
                 style={{
-                  fontSize: 20,
-                  flexShrink: 0,
-                  width: 32,
-                  textAlign: "center",
+                  minHeight: 44,
+                  background: isActive ? "var(--primary-soft)" : "transparent",
+                  border: isActive
+                    ? "1px solid var(--primary)"
+                    : "1px solid transparent",
+                  cursor: "pointer",
+                  transition: "background 150ms",
+                  padding: isExpanded ? "0 8px" : "0",
+                  justifyContent: isExpanded ? "flex-start" : "center",
                 }}
+                onClick={() => onSelect(board.id)}
               >
-                {board.icon}
-              </span>
+                {/* 이모지 */}
+                <span
+                  style={{
+                    fontSize: 20,
+                    flexShrink: 0,
+                    width: 32,
+                    textAlign: "center",
+                  }}
+                >
+                  {board.icon}
+                </span>
 
-              {/* 이름 + 편집/삭제 (expanded 시) */}
-              {isExpanded && (
-                <>
-                  {editingId === board.id ? (
-                    <input
-                      ref={editInputRef}
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitEdit();
-                        if (e.key === "Escape") setEditingId(null);
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 rounded px-1"
-                      style={{
-                        fontSize: 14,
-                        background: "var(--surface-hover)",
-                        border: "1px solid var(--primary)",
-                        color: "var(--text-primary)",
-                        outline: "none",
-                        height: 28,
-                        minWidth: 0,
-                      }}
-                    />
-                  ) : (
-                    <span
-                      className="flex-1 truncate"
-                      style={{
-                        fontSize: 14,
-                        color: isActive ? "var(--primary)" : "var(--text-primary)",
-                        fontWeight: isActive ? 600 : 400,
-                        paddingLeft: 6,
-                      }}
-                    >
-                      {board.name}
-                    </span>
-                  )}
-
-                  {/* 편집/삭제 버튼 (hover 시 표시) */}
-                  {editingId !== board.id && (
-                    <div
-                      className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0 ml-1"
-                      style={{ transition: "opacity 150ms" }}
-                    >
-                      <button
-                        onClick={(e) => startEdit(board, e)}
-                        className="flex items-center justify-center rounded"
-                        style={{
-                          width: 28,
-                          height: 28,
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          fontSize: 13,
+                {/* 이름 + 편집/삭제 (expanded 시) */}
+                {isExpanded && (
+                  <>
+                    {editingId === board.id ? (
+                      <input
+                        ref={editInputRef}
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitEdit();
+                          if (e.key === "Escape") setEditingId(null);
+                          e.stopPropagation();
                         }}
-                        title="이름 수정"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 rounded px-1"
+                        style={{
+                          fontSize: 14,
+                          background: "var(--surface-hover)",
+                          border: "1px solid var(--primary)",
+                          color: "var(--text-primary)",
+                          outline: "none",
+                          height: 28,
+                          minWidth: 0,
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="flex-1 truncate"
+                        style={{
+                          fontSize: 14,
+                          color: isActive ? "var(--primary)" : "var(--text-primary)",
+                          fontWeight: isActive ? 600 : 400,
+                          paddingLeft: 6,
+                        }}
                       >
-                        ✏️
-                      </button>
+                        {board.name}
+                      </span>
+                    )}
+
+                    {/* 편집/삭제 버튼 (hover 시 표시) */}
+                    {editingId !== board.id && (
+                      <div
+                        className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0 ml-1"
+                        style={{ transition: "opacity 150ms" }}
+                      >
+                        <button
+                          onClick={(e) => startEdit(board, e)}
+                          className="flex items-center justify-center rounded"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            background: "transparent",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: 13,
+                          }}
+                          title="이름 수정"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`"${board.name}" 보드를 삭제할까요?`)) {
+                              removeBoard(board.id);
+                            }
+                          }}
+                          className="flex items-center justify-center rounded"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            background: "transparent",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: 13,
+                          }}
+                          title="보드 삭제"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* 그룹 서브카테고리 (active 보드 + expanded 사이드바) */}
+              {isActive && isExpanded && groups.length > 0 && (
+                <div style={{ paddingLeft: 12, marginTop: 2, marginBottom: 2 }}>
+                  {groups.map((g) => (
+                    <div
+                      key={g.id}
+                      className="flex items-center gap-1.5 rounded-md"
+                      style={{
+                        minHeight: 32,
+                        padding: "0 8px",
+                        cursor: "pointer",
+                        transition: "background 120ms",
+                        color: "var(--text-secondary)",
+                        fontSize: 13,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFocusGroup(g.id);
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "var(--surface-hover)")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "transparent")
+                      }
+                      title={`${g.name} — 클릭하면 캔버스에서 이 그룹으로 이동`}
+                    >
+                      {/* 색상 점 */}
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: GROUP_COLOR_DOT[g.color] ?? "#94a3b8",
+                          flexShrink: 0,
+                        }}
+                      />
+                      {/* 폴더 아이콘 */}
+                      <span style={{ fontSize: 13, flexShrink: 0 }}>
+                        {g.isCollapsed ? "📁" : "📂"}
+                      </span>
+                      {/* 이름 */}
+                      <span
+                        className="flex-1 truncate"
+                        style={{ fontWeight: 500 }}
+                      >
+                        {g.name}
+                      </span>
+                      {/* 접기/펼치기 토글 */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`"${board.name}" 보드를 삭제할까요?`)) {
-                            removeBoard(board.id);
-                          }
+                          updateGroup(board.id, g.id, { isCollapsed: !g.isCollapsed });
+                          if (g.isCollapsed) setFocusGroup(g.id);
                         }}
-                        className="flex items-center justify-center rounded"
                         style={{
-                          width: 28,
-                          height: 28,
-                          background: "transparent",
+                          background: "none",
                           border: "none",
                           cursor: "pointer",
-                          fontSize: 13,
+                          fontSize: 10,
+                          color: "var(--text-muted)",
+                          padding: "2px 4px",
+                          borderRadius: 4,
+                          flexShrink: 0,
                         }}
-                        title="보드 삭제"
+                        title={g.isCollapsed ? "펼치기" : "폴더로 접기"}
                       >
-                        🗑️
+                        {g.isCollapsed ? "▶" : "▾"}
                       </button>
                     </div>
-                  )}
-                </>
+                  ))}
+                </div>
               )}
             </div>
           );

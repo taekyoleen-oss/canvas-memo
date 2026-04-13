@@ -16,6 +16,7 @@ export interface Board {
   updatedAt: string; // ISO
   modules: Module[];
   connections: Connection[];
+  groups: Group[];
   viewport: { x: number; y: number; zoom: number };
 }
 
@@ -86,4 +87,24 @@ export interface Connection {
   label: string;
   style: "solid" | "dashed";
   color: string;
+}
+
+export type GroupColor =
+  | "yellow"
+  | "pink"
+  | "teal"
+  | "blue"
+  | "purple"
+  | "orange";
+
+export interface Group {
+  id: string;
+  name: string;
+  moduleIds: string[];
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  color: GroupColor;
+  isCollapsed: boolean;
+  createdAt: string;
+  updatedAt: string;
 }

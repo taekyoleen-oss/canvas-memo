@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
-import { Board, Module, Connection } from "@/types";
+import { Board, Module, Connection, Group } from "@/types";
 import { loadAppData, createDebouncedSave } from "@/lib/storage";
 import { createClient } from "@/lib/supabase/client";
 
@@ -12,7 +12,7 @@ interface CanvasStore {
   addBoard(
     board: Omit<
       Board,
-      "id" | "createdAt" | "updatedAt" | "modules" | "connections" | "viewport"
+      "id" | "createdAt" | "updatedAt" | "modules" | "connections" | "groups" | "viewport"
     >
   ): void;
   removeBoard(boardId: string): void;
@@ -35,6 +35,15 @@ interface CanvasStore {
   // 커넥션 CRUD
   addConnection(boardId: string, connection: Omit<Connection, "id">): void;
   removeConnection(boardId: string, connectionId: string): void;
+
+  // 그룹 CRUD
+  addGroup(boardId: string, group: Omit<Group, "id" | "createdAt" | "updatedAt">): void;
+  removeGroup(boardId: string, groupId: string): void;
+  updateGroup(boardId: string, groupId: string, updates: Partial<Group>): void;
+
+  // 그룹 포커스 (사이드바 → 캔버스 네비게이션)
+  focusGroupId: string | null;
+  setFocusGroup(groupId: string | null): void;
 
   // 뷰포트
   updateViewport(boardId: string, viewport: Board["viewport"]): void;
@@ -117,13 +126,20 @@ async function pushBoardToSupabase(
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
   boards: [],
   activeBoardId: null,
+  focusGroupId: null,
 
   hydrate() {
     const appData = loadAppData();
     if (!appData) return;
 
+    // 기존 데이터에 groups 필드가 없으면 빈 배열로 보정
+    const boards = (appData.boards ?? []).map((b) => ({
+      ...b,
+      groups: (b as Board & { groups?: Group[] }).groups ?? [],
+    }));
+
     set({
-      boards: appData.boards ?? [],
+      boards,
       activeBoardId: appData.lastOpenedBoardId ?? null,
     });
 
@@ -200,6 +216,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           style: c.style as Connection["style"],
           color: c.color,
         })),
+      groups: [],
     }));
 
     set({
@@ -221,6 +238,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   // ─── 보드 CRUD ─────────────────────────────────────────────────────────
 
+  setFocusGroup(groupId) {
+    set({ focusGroupId: groupId });
+  },
+
   addBoard(boardInput) {
     const now = getTimestamp();
     const newBoard: Board = {
@@ -230,6 +251,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       updatedAt: now,
       modules: [],
       connections: [],
+      groups: [],
       viewport: { x: 0, y: 0, zoom: 1 },
     };
 
@@ -428,6 +450,49 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave?.();
     createClient().from("connections").delete().eq("id", connectionId).then(() => {});
+  },
+
+  // ─── 그룹 CRUD ─────────────────────────────────────────────────────────
+
+  addGroup(boardId, groupInput) {
+    const now = getTimestamp();
+    const newGroup: Group = { ...groupInput, id: uuidv4(), createdAt: now, updatedAt: now };
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === boardId
+          ? { ...b, groups: [...(b.groups ?? []), newGroup], updatedAt: now }
+          : b
+      ),
+    }));
+    debouncedSave?.();
+  },
+
+  removeGroup(boardId, groupId) {
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === boardId
+          ? { ...b, groups: (b.groups ?? []).filter((g) => g.id !== groupId), updatedAt: getTimestamp() }
+          : b
+      ),
+    }));
+    debouncedSave?.();
+  },
+
+  updateGroup(boardId, groupId, updates) {
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === boardId
+          ? {
+              ...b,
+              groups: (b.groups ?? []).map((g) =>
+                g.id === groupId ? { ...g, ...updates, updatedAt: getTimestamp() } : g
+              ),
+              updatedAt: getTimestamp(),
+            }
+          : b
+      ),
+    }));
+    debouncedSave?.();
   },
 
   // ─── 뷰포트 ────────────────────────────────────────────────────────────
