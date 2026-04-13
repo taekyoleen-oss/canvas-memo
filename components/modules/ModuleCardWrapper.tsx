@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { Module, MemoData, ScheduleData, ImageData, LinkData } from "@/types";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 import { useCanvasStore } from "@/store/canvas";
@@ -65,6 +66,9 @@ export default function ModuleCardWrapper({
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [showAnchors, setShowAnchors] = useState(false);
 
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const lastSyncedHeightRef = useRef<number>(0);
+
   const dragStartRef = useRef<{
     pointerId: number;
     pointerX: number;
@@ -72,7 +76,35 @@ export default function ModuleCardWrapper({
     moduleX: number;
     moduleY: number;
   } | null>(null);
-  const lastClickTimeRef = useRef(0);
+  const didDragRef = useRef(false);
+
+  // 실제 렌더링 높이를 store에 동기화 (앵커 위치 계산 정확도 향상)
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const h = Math.round(el.offsetHeight);
+      if (h > 0 && h !== lastSyncedHeightRef.current) {
+        lastSyncedHeightRef.current = h;
+        updateModule(boardId, module.id, {
+          size: { width: module.size.width, height: h },
+        });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [boardId, module.id, module.size.width, updateModule]);
+
+  // 컨텍스트 메뉴가 열려 있을 때 document 클릭으로 닫기
+  useEffect(() => {
+    if (!isContextMenuOpen) return;
+    function close() { setIsContextMenuOpen(false); }
+    const id = setTimeout(() => document.addEventListener("click", close, { once: true }), 0);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("click", close);
+    };
+  }, [isContextMenuOpen]);
 
   const longPress = useLongPress(() => {
     setIsContextMenuOpen(true);
@@ -91,8 +123,15 @@ export default function ModuleCardWrapper({
       ) {
         return;
       }
-      // 연결 모드 중에는 드래그 이동 막기
-      if (useConnectionStore.getState().mode === "connecting") return;
+
+      // 항상 didDragRef 초기화 (early return 이전)
+      didDragRef.current = false;
+
+      // 연결 모드: 드래그 이동 막기, 이벤트 버블링 차단
+      if (useConnectionStore.getState().mode === "connecting") {
+        e.stopPropagation();
+        return;
+      }
 
       e.stopPropagation();
       if (e.button === 2) return;
@@ -119,6 +158,7 @@ export default function ModuleCardWrapper({
 
       if (!isDragging && Math.sqrt(dx * dx + dy * dy) > 5) {
         setIsDragging(true);
+        didDragRef.current = true;
       }
 
       if (isDragging) {
@@ -136,8 +176,6 @@ export default function ModuleCardWrapper({
   );
 
   // ── 포인터 업: 드래그 종료 ───────────────────────────────────
-  // 연결 완성은 onClick(handleClick)에서 처리 — pointerup에서 처리하면
-  // e.preventDefault()가 뒤따르는 click 이벤트를 막아 버리는 문제가 생김
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       if (!dragStartRef.current) return;
@@ -173,9 +211,13 @@ export default function ModuleCardWrapper({
     startConnecting(module.id, "right");
   }
 
-  // ── 클릭: 연결 완성 / 선택 / 더블클릭: 확장 토글 ─────────────
+  // ── 클릭: 연결 완성 / 선택 / 더블클릭(e.detail===2): 확장 토글 ──
   function handleClick(e: React.MouseEvent) {
-    if (isDragging) return;
+    if (didDragRef.current) {
+      didDragRef.current = false;
+      return;
+    }
+
     const target = e.target as HTMLElement;
     if (
       target.tagName === "BUTTON" ||
@@ -184,8 +226,9 @@ export default function ModuleCardWrapper({
       target.closest("button") ||
       target.closest("input") ||
       target.closest("textarea")
-    )
+    ) {
       return;
+    }
 
     // 연결 모드: 클릭한 모듈로 연결 완성
     const { mode, fromModuleId: fromId } = useConnectionStore.getState();
@@ -198,21 +241,21 @@ export default function ModuleCardWrapper({
       return;
     }
 
-    // 더블클릭 감지
-    const now = Date.now();
-    const isDouble = now - lastClickTimeRef.current < 350;
-    lastClickTimeRef.current = now;
-
-    if (isDouble) {
+    // 더블클릭 → 확장 토글
+    if (e.detail === 2) {
+      console.log("[DBG] double-click → toggleExpand");
       handleToggleExpand();
+      return;
+    }
+
+    // 단일 클릭 → 선택/해제
+    if (isSelected) {
+      onDeselect();
     } else {
-      if (isSelected) {
-        onDeselect();
-      } else {
-        onSelect(module.id);
-      }
+      onSelect(module.id);
     }
   }
+
 
   function renderModuleContent() {
     switch (module.type) {
@@ -256,13 +299,12 @@ export default function ModuleCardWrapper({
   const isConnectingMode   = connectionMode === "connecting";
   const isConnectingSource = isConnectingMode && fromModuleId === module.id;
   const isConnectTarget    = isConnectingMode && fromModuleId !== module.id;
-  // 드래그 중에도 소스 모듈의 앵커 유지 (dragSourceModuleId로 판단)
   const isDragSource       = dragSourceModuleId === module.id;
 
   return (
     <>
       <div
-        // 모듈 식별 — 드롭 대상 감지에 사용
+        ref={wrapperRef}
         data-module-wrapper-id={module.id}
         style={{
           position: "absolute",
@@ -342,55 +384,61 @@ export default function ModuleCardWrapper({
         </ModuleCard>
       </div>
 
-      <ModuleContextMenu
-        isOpen={isContextMenuOpen}
-        anchorRect={menuAnchorRect}
-        onClose={() => setIsContextMenuOpen(false)}
-        onColorChange={() => {
-          setIsContextMenuOpen(false);
-          setIsColorPaletteOpen(true);
-        }}
-        onDuplicate={handleDuplicate}
-        onDelete={() => {
-          setIsContextMenuOpen(false);
-          setIsDeleteDialogOpen(true);
-        }}
-      />
-
-      {isColorPaletteOpen && (
-        <div
-          className="fixed inset-0 flex items-center justify-center px-4"
-          style={{ zIndex: 100, background: "rgba(0,0,0,0.4)" }}
-          onClick={() => setIsColorPaletteOpen(false)}
-        >
-          <div
-            className="rounded-2xl p-4"
-            style={{
-              background: "var(--surface-elevated)",
-              border: "1px solid var(--border)",
-              boxShadow: "var(--shadow-lg)",
+      {/* ── 오버레이: CSS transform 밖(document.body)에 portal로 렌더링 ── */}
+      {createPortal(
+        <>
+          <ModuleContextMenu
+            isOpen={isContextMenuOpen}
+            anchorRect={menuAnchorRect}
+            onClose={() => setIsContextMenuOpen(false)}
+            onColorChange={() => {
+              setIsContextMenuOpen(false);
+              setIsColorPaletteOpen(true);
             }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-sm font-medium mb-3 px-1" style={{ color: "var(--text-primary)" }}>
-              색상 선택
-            </p>
-            <ColorPalette
-              current={module.color}
-              onSelect={(color) => {
-                updateModule(boardId, module.id, { color });
-                setIsColorPaletteOpen(false);
-              }}
-            />
-          </div>
-        </div>
-      )}
+            onDuplicate={handleDuplicate}
+            onDelete={() => {
+              setIsContextMenuOpen(false);
+              setIsDeleteDialogOpen(true);
+            }}
+          />
 
-      <DeleteConfirmDialog
-        isOpen={isDeleteDialogOpen}
-        onClose={() => setIsDeleteDialogOpen(false)}
-        onConfirm={handleDelete}
-      />
+          {isColorPaletteOpen && (
+            <div
+              className="fixed inset-0 flex items-center justify-center px-4"
+              style={{ zIndex: 100, background: "rgba(0,0,0,0.4)" }}
+              onClick={() => setIsColorPaletteOpen(false)}
+            >
+              <div
+                className="rounded-2xl p-4"
+                style={{
+                  background: "var(--surface-elevated)",
+                  border: "1px solid var(--border)",
+                  boxShadow: "var(--shadow-lg)",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-sm font-medium mb-3 px-1" style={{ color: "var(--text-primary)" }}>
+                  색상 선택
+                </p>
+                <ColorPalette
+                  current={module.color}
+                  onSelect={(color) => {
+                    updateModule(boardId, module.id, { color });
+                    setIsColorPaletteOpen(false);
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          <DeleteConfirmDialog
+            isOpen={isDeleteDialogOpen}
+            onClose={() => setIsDeleteDialogOpen(false)}
+            onConfirm={handleDelete}
+          />
+        </>,
+        document.body
+      )}
 
       <style>{`
         @keyframes connectTarget {

@@ -6,7 +6,7 @@ import TopHeader from "@/components/layout/TopHeader";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import Sidebar from "@/components/layout/Sidebar";
 import Canvas from "@/components/canvas/Canvas";
-import ModuleFAB from "@/components/ui-overlays/ModuleFAB";
+import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
 
 interface AddBoardDialogProps {
   isOpen: boolean;
@@ -222,6 +222,7 @@ export default function Home() {
           boardName={activeBoard?.name ?? "보드"}
           onAddModule={() => handleAddModule("memo")}
         />
+        {activeBoardId && <ModuleToolbar onAdd={handleAddModule} />}
         <div className="flex-1 relative overflow-hidden">
           {activeBoardId ? (
             <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
@@ -252,21 +253,21 @@ export default function Home() {
           onSelect={setActiveBoard}
           onAdd={() => setShowAddBoard(true)}
         />
-        <div className="flex-1 relative overflow-hidden">
-          {activeBoardId ? (
-            <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <span style={{ color: "var(--text-muted)", fontSize: 14 }}>
-                좌측에서 보드를 선택하세요
-              </span>
-            </div>
-          )}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {activeBoardId && <ModuleToolbar onAdd={handleAddModule} />}
+          <div className="flex-1 relative overflow-hidden">
+            {activeBoardId ? (
+              <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <span style={{ color: "var(--text-muted)", fontSize: 14 }}>
+                  좌측에서 보드를 선택하세요
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-
-      {/* FAB — 보드가 선택되어 있을 때만 표시 */}
-      {activeBoardId && <ModuleFAB onAdd={handleAddModule} />}
 
       {/* 보드 추가 다이얼로그 */}
       <AddBoardDialog

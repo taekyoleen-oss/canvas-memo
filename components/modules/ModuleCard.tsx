@@ -132,7 +132,7 @@ export default function ModuleCard({
             transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)",
           }}
           aria-label={module.isExpanded ? "접기" : "더보기"}
-          title={module.isExpanded ? "접기" : "더보기 (더블클릭도 가능)"}
+          title={module.isExpanded ? "접기" : "더보기"}
         >
           ▾
         </button>

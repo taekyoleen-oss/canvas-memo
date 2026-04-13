@@ -44,31 +44,28 @@ export default function AnchorPoint({
   const setDragSource    = useConnectionStore((s) => s.setDragSource);
   const clearDragSource  = useConnectionStore((s) => s.clearDragSource);
 
-  const isConnecting       = mode === "connecting";
-  const isThisSource       = fromModuleId === moduleId;
+  const isConnecting = mode === "connecting";
+  const isThisSource = fromModuleId === moduleId;
 
   const [hovered, setHovered] = useState(false);
 
-  // 최신 viewport를 ref로 유지
   const vpRef = useRef(viewport);
   vpRef.current = viewport;
 
-  // 드래그 상태 ref (re-render 불필요)
   const drag = useRef<{
     pointerId: number;
     startX: number;
     startY: number;
-    started: boolean;  // startConnecting 이미 호출됐는지
+    started: boolean;
   } | null>(null);
 
-  // ── OUTPUT anchor ─────────────────────────────────────────────
+  // ── OUTPUT anchor handlers ─────────────────────────────────────
 
   function handlePointerDown(e: React.PointerEvent) {
     if (type !== "output") return;
     e.stopPropagation();
     e.preventDefault();
 
-    // 포인터 캡처 → 마우스가 어디 있어도 이 앵커가 모든 이벤트 수신
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 
     drag.current = {
@@ -78,7 +75,6 @@ export default function AnchorPoint({
       started: false,
     };
 
-    // 드래그 전에도 앵커 DOM 유지
     setDragSource(moduleId);
   }
 
@@ -90,7 +86,6 @@ export default function AnchorPoint({
 
     const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
 
-    // 5 px 임계값 초과 → 실제 드래그 연결 시작
     if (!d.started && dist > 5) {
       d.started = true;
       startConnecting(moduleId, anchor);
@@ -109,15 +104,15 @@ export default function AnchorPoint({
   }
 
   function handlePointerUp(e: React.PointerEvent) {
+    // ── INPUT anchor: connecting 모드면 연결 완성 ──
     if (type === "input") {
-      // input anchor: connecting 모드면 연결 완성
       if (!isConnecting || isThisSource) return;
       e.stopPropagation();
       finishConnecting(moduleId, anchor);
       return;
     }
 
-    // output anchor
+    // ── OUTPUT anchor ──
     const d = drag.current;
     if (!d || d.pointerId !== e.pointerId) return;
 
@@ -127,8 +122,8 @@ export default function AnchorPoint({
     drag.current = null;
 
     if (d.started) {
-      // ── 드래그 완료: 드롭 위치에서 대상 감지 ──
-      e.preventDefault(); // 드래그 후 불필요한 click 이벤트 방지
+      // 드래그 완료: 드롭 위치의 대상 감지
+      e.preventDefault();
 
       const els = document.elementsFromPoint(e.clientX, e.clientY);
 
@@ -164,12 +159,12 @@ export default function AnchorPoint({
       // 빈 공간 드롭 → 취소
       cancelConnecting();
     } else {
-      // ── 클릭(드래그 없음): 클릭-투-커넥트 모드 토글 ──
+      // 클릭(드래그 없음): 클릭-투-커넥트 모드 토글
       if (isConnecting && isThisSource) {
         cancelConnecting();
       } else if (!isConnecting) {
         startConnecting(moduleId, anchor);
-        // 클릭 즉시 previewPos를 소스 앵커 위치로 초기화 → 마우스 이동 시 선 바로 표시
+        // previewPos를 소스 앵커 위치로 즉시 초기화
         const st  = useCanvasStore.getState();
         const brd = st.boards.find((b) => b.id === st.activeBoardId);
         const mod = brd?.modules.find((m) => m.id === moduleId);
@@ -187,10 +182,9 @@ export default function AnchorPoint({
     cancelConnecting();
   }
 
-  // input은 connecting 모드 + 다른 모듈만 렌더
+  // input 앵커: connecting 모드 + 다른 모듈만 렌더
   if (type === "input" && (!isConnecting || isThisSource)) return null;
 
-  // 드래그 시작된 그 앵커만 active (나머지 3개는 inactive)
   const isActive = type === "output" && isConnecting && isThisSource && anchor === fromAnchor;
 
   return (
