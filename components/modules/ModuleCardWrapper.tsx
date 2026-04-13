@@ -369,8 +369,8 @@ export default function ModuleCardWrapper({
           />
         )}
 
-        {/* output 앵커: hover·선택·connecting 모드·드래그 중에 표시 */}
-        {(showAnchors || isSelected || isConnectingMode || isDragSource) &&
+        {/* output 앵커: hover·connecting 모드·드래그 중에만 표시 (isSelected 제거 — 선택 시 자동표시가 의도치 않은 연결모드 진입 유발) */}
+        {(showAnchors || isConnectingMode || isDragSource) &&
           (["top", "right", "bottom", "left"] as const).map((side) => (
             <AnchorPoint
               key={`out-${side}`}
