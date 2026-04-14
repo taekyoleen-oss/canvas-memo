@@ -150,6 +150,40 @@ function GroupNameDialog({ moduleCount, groupCount, onConfirm, onCancel }: Group
   );
 }
 
+// ── 그룹 초대 다이얼로그 ─────────────────────────────────────────────────
+interface GroupInviteDialogProps {
+  groupName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function GroupInviteDialog({ groupName, onConfirm, onCancel }: GroupInviteDialogProps) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl p-6 w-80 flex flex-col gap-4">
+        <p className="text-sm font-medium text-[var(--text-primary)] text-center">
+          <span className="font-bold text-[var(--primary)]">&#39;{groupName}&#39;</span> 그룹에 추가하시겠습니까?
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2 rounded-xl border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors"
+          >
+            연결만
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 py-2 rounded-xl bg-[var(--primary)] text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+          >
+            그룹에 추가
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 메인 Canvas 컴포넌트 ────────────────────────────────────────────────
 export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
@@ -157,8 +191,11 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
   const addGroup = useCanvasStore((s) => s.addGroup);
+  const updateGroup = useCanvasStore((s) => s.updateGroup);
   const focusGroupId = useCanvasStore((s) => s.focusGroupId);
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
+  const pendingGroupInvite = useCanvasStore((s) => s.pendingGroupInvite);
+  const clearGroupInvite = useCanvasStore((s) => s.clearGroupInvite);
   const cancelConnecting = useConnectionStore((s) => s.cancelConnecting);
   const updatePreviewPos = useConnectionStore((s) => s.updatePreviewPos);
   const connectionMode = useConnectionStore((s) => s.mode);
@@ -194,6 +231,14 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const [lassoMode, setLassoMode] = useState(false);
   const [lasso, setLasso] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const lassoStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+
+  // ── 다중 선택 ────────────────────────────────────────────────
+  const [selectedMultiIds, setSelectedMultiIds] = useState<string[]>([]);
+  // 렌더링용 state + stale closure 방지용 ref 병행 사용
+  const [selectionLasso, setSelectionLasso] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const selectionLassoRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const selectionStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const multiDragOriginsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   // 그룹 이름 다이얼로그
   const [pendingModuleIds, setPendingModuleIds] = useState<string[]>([]);
@@ -282,6 +327,24 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     setShowGroupDialog(false);
   }
 
+  // ── 그룹 초대 dialog 핸들러 ──────────────────────────────────────
+  function handleGroupInviteConfirm() {
+    if (!pendingGroupInvite) return;
+    const { groupId, candidateModuleId, boardId: inviteBoardId } = pendingGroupInvite;
+    const targetBoard = useCanvasStore.getState().boards.find((b) => b.id === inviteBoardId);
+    const group = targetBoard?.groups?.find((g) => g.id === groupId);
+    if (group && !group.moduleIds.includes(candidateModuleId)) {
+      updateGroup(inviteBoardId, groupId, {
+        moduleIds: [...group.moduleIds, candidateModuleId],
+      });
+    }
+    clearGroupInvite();
+  }
+
+  function handleGroupInviteCancel() {
+    clearGroupInvite();
+  }
+
   // ── 사이드바에서 그룹 포커스 요청 처리 ──────────────────────────
   useEffect(() => {
     if (!focusGroupId || !board) return;
@@ -330,6 +393,9 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         setSelectedModuleId(null);
         setLassoMode(false);
         setLasso(null);
+        setSelectedMultiIds([]);
+        selectionLassoRef.current = null;
+        setSelectionLasso(null);
         return;
       }
 
@@ -346,12 +412,96 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
 
   // ── 커넥션 프리뷰 포인터 이동 ───────────────────────────────────
   function handlePointerMove(e: React.PointerEvent) {
-    if (connectionMode !== "connecting") return;
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
-    updatePreviewPos(
-      screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport)
+    if (connectionMode === "connecting") {
+      updatePreviewPos(screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport));
+    }
+    if (selectionStartRef.current && selectionStartRef.current.pointerId === e.pointerId) {
+      const p = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport);
+      const updated = { x1: selectionStartRef.current.x, y1: selectionStartRef.current.y, x2: p.x, y2: p.y };
+      selectionLassoRef.current = updated;
+      setSelectionLasso(updated);
+    }
+  }
+
+  // ── 다중 선택 오버레이 핸들러 (data-canvas-bg 내부 z-index:0 레이어) ───
+  function handleSelectionPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const p = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport);
+    selectionStartRef.current = { x: p.x, y: p.y, pointerId: e.pointerId };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const initial = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+    selectionLassoRef.current = initial;
+    setSelectionLasso(initial);
+  }
+
+  function handleSelectionPointerMove(e: React.PointerEvent) {
+    if (!selectionStartRef.current || selectionStartRef.current.pointerId !== e.pointerId) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const p = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport);
+    const updated = { x1: selectionStartRef.current.x, y1: selectionStartRef.current.y, x2: p.x, y2: p.y };
+    selectionLassoRef.current = updated;
+    setSelectionLasso(updated);
+  }
+
+  function handleSelectionPointerUp(e: React.PointerEvent) {
+    if (!selectionStartRef.current || selectionStartRef.current.pointerId !== e.pointerId) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+
+    const lasso = selectionLassoRef.current;
+    selectionStartRef.current = null;
+    selectionLassoRef.current = null;
+    setSelectionLasso(null);
+
+    if (!lasso) return;
+    const lx = Math.min(lasso.x1, lasso.x2);
+    const ly = Math.min(lasso.y1, lasso.y2);
+    const lw = Math.abs(lasso.x2 - lasso.x1);
+    const lh = Math.abs(lasso.y2 - lasso.y1);
+
+    if (lw < 10 || lh < 10) {
+      setSelectedMultiIds([]);
+      return;
+    }
+
+    const collapsedIds = new Set(
+      (board?.groups ?? []).filter((g) => g.isCollapsed).flatMap((g) => g.moduleIds)
     );
+    const hit = (board?.modules ?? []).filter((m) => {
+      if (collapsedIds.has(m.id)) return false;
+      const mx = m.position.x, my = m.position.y, mw = m.size.width, mh = m.size.height;
+      return mx < lx + lw && mx + mw > lx && my < ly + lh && my + mh > ly;
+    });
+    setSelectedMultiIds(hit.map((m) => m.id));
+  }
+
+  // Shift+클릭 개별 모듈 추가/제거
+  function handleShiftSelect(id: string) {
+    setSelectedMultiIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+    setSelectedModuleId(null);
+  }
+
+  function handleMultiDragStart() {
+    if (!board) return;
+    const origins = new Map<string, { x: number; y: number }>();
+    selectedMultiIds.forEach((id) => {
+      const m = board.modules.find((mod) => mod.id === id);
+      if (m) origins.set(id, { x: m.position.x, y: m.position.y });
+    });
+    multiDragOriginsRef.current = origins;
+  }
+
+  function handleMultiDragMove(dx: number, dy: number) {
+    multiDragOriginsRef.current.forEach((origin, id) => {
+      updateModule(boardId, id, { position: { x: origin.x + dx, y: origin.y + dy } });
+    });
   }
 
   // ── 캔버스 빈 공간 클릭 ─────────────────────────────────────────
@@ -360,6 +510,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     if (el === containerRef.current || el.dataset.canvasBg) {
       cancelConnecting();
       setSelectedModuleId(null);
+      setSelectedMultiIds([]);
     }
   }
 
@@ -452,39 +603,83 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     if (modules.length === 0) return;
 
     const MODULE_W = 260;
-    const COLLAPSED_H = 68;   // 접힌 카드 높이 기준
-    const GAP_X = 56;
-    const GAP_Y = 64;
+    const COLLAPSED_H = 68;
+    const GAP_X = 80;
+    const GAP_Y = 100;
     const START_X = 40;
     const START_Y = 40;
 
-    // 컬럼 수: 최대 4개, 모듈 수에 따라 조정
-    const COLS = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(modules.length))));
+    // 연결 정보로 트리 레이아웃 계산
+    const connections = board?.connections ?? [];
+    const childrenMap = new Map<string, string[]>();
+    const hasParent = new Set<string>();
+    const moduleIds = new Set(modules.map((m) => m.id));
+
+    connections.forEach((conn) => {
+      if (!moduleIds.has(conn.fromModuleId) || !moduleIds.has(conn.toModuleId)) return;
+      if (!childrenMap.has(conn.fromModuleId)) childrenMap.set(conn.fromModuleId, []);
+      childrenMap.get(conn.fromModuleId)!.push(conn.toModuleId);
+      hasParent.add(conn.toModuleId);
+    });
 
     // 생성 시간 순 정렬
     const sorted = [...modules].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
 
-    // 1) 모든 모듈을 접힌 상태로 변경 + 그리드 위치 계산
-    const positions: { id: string; x: number; y: number }[] = [];
-    sorted.forEach((module, i) => {
-      const col = i % COLS;
-      const row = Math.floor(i / COLS);
+    // 루트 모듈: 다른 모듈의 연결 대상이 아닌 모듈
+    const roots = sorted.filter((m) => !hasParent.has(m.id));
+    // 독립 모듈(연결이 전혀 없는 경우 포함): 루트와 동일하게 처리
+
+    const positionMap = new Map<string, { x: number; y: number }>();
+    const visited = new Set<string>();
+
+    // 트리 레이아웃: 각 레벨(컬럼)에 모듈 배치, 자식은 우측에 세로로 쌓음
+    let colYCounters: number[] = []; // 각 컬럼별 현재 y 오프셋
+
+    function placeModule(id: string, col: number) {
+      if (visited.has(id)) return;
+      visited.add(id);
+
+      while (colYCounters.length <= col) colYCounters.push(0);
       const x = START_X + col * (MODULE_W + GAP_X);
-      const y = START_Y + row * (COLLAPSED_H + GAP_Y);
-      positions.push({ id: module.id, x, y });
+      const y = START_Y + colYCounters[col];
+      positionMap.set(id, { x, y });
+      colYCounters[col] += COLLAPSED_H + GAP_Y;
+
+      const children = childrenMap.get(id) ?? [];
+      children.forEach((childId) => placeModule(childId, col + 1));
+    }
+
+    roots.forEach((m) => placeModule(m.id, 0));
+
+    // 연결이 없어 아직 배치 안된 모듈(고아 모듈)은 마지막 컬럼에 배치
+    const orphans = sorted.filter((m) => !visited.has(m.id));
+    const orphanCol = Math.max(0, colYCounters.length);
+    colYCounters.push(0);
+    orphans.forEach((m) => {
+      const x = START_X + orphanCol * (MODULE_W + GAP_X);
+      const y = START_Y + (colYCounters[orphanCol] ?? 0);
+      positionMap.set(m.id, { x, y });
+      colYCounters[orphanCol] = (colYCounters[orphanCol] ?? 0) + COLLAPSED_H + GAP_Y;
+    });
+
+    // 1) 모든 모듈을 접힌 상태로 변경 + 위치 적용
+    modules.forEach((module) => {
+      const pos = positionMap.get(module.id);
+      if (!pos) return;
       updateModule(boardId, module.id, {
         isExpanded: false,
-        position: { x, y },
+        position: pos,
         size: { width: MODULE_W, height: COLLAPSED_H },
       });
     });
 
     // 2) 줌 100% + 전체 레이아웃이 화면 중앙에 오도록 뷰포트 설정
-    const ROWS = Math.ceil(sorted.length / COLS);
-    const totalW = COLS * MODULE_W + (COLS - 1) * GAP_X + START_X * 2;
-    const totalH = ROWS * COLLAPSED_H + (ROWS - 1) * GAP_Y + START_Y * 2;
+    const usedCols = colYCounters.length;
+    const maxRows = Math.max(...colYCounters.map((y) => Math.round((y - START_Y) / (COLLAPSED_H + GAP_Y))), 1);
+    const totalW = usedCols * MODULE_W + (usedCols - 1) * GAP_X + START_X * 2;
+    const totalH = maxRows * COLLAPSED_H + (maxRows - 1) * GAP_Y + START_Y * 2;
 
     const container = containerRef.current;
     if (container) {
@@ -558,6 +753,31 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         </svg>
       )}
 
+      {/* 다중 선택 라소 */}
+      {selectionLasso && (
+        <svg
+          style={{
+            position: "absolute", top: 0, left: 0,
+            width: "100%", height: "100%",
+            overflow: "visible", pointerEvents: "none", zIndex: 30,
+          }}
+        >
+          <g transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
+            <rect
+              x={Math.min(selectionLasso.x1, selectionLasso.x2)}
+              y={Math.min(selectionLasso.y1, selectionLasso.y2)}
+              width={Math.abs(selectionLasso.x2 - selectionLasso.x1)}
+              height={Math.abs(selectionLasso.y2 - selectionLasso.y1)}
+              fill="rgba(59,130,246,0.08)"
+              stroke="rgb(59,130,246)"
+              strokeWidth={2 / viewport.zoom}
+              strokeDasharray={`${6 / viewport.zoom} ${3 / viewport.zoom}`}
+              rx={4 / viewport.zoom}
+            />
+          </g>
+        </svg>
+      )}
+
       {/* 라소 모드 인터랙션 오버레이 (모듈 클릭 차단) */}
       {lassoMode && (
         <div
@@ -590,6 +810,29 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
           willChange: "transform",
         }}
       >
+        {/* 다중 선택 히트 레이어 — 모듈(z-index≥1)보다 아래, 빈 캔버스 드래그 감지 */}
+        {!lassoMode && connectionMode !== "connecting" && (
+          <div
+            style={{
+              position: "absolute",
+              top: -50000,
+              left: -50000,
+              width: 100000,
+              height: 100000,
+              zIndex: 0,
+              touchAction: "none",
+            }}
+            onPointerDown={handleSelectionPointerDown}
+            onPointerMove={handleSelectionPointerMove}
+            onPointerUp={handleSelectionPointerUp}
+            onPointerCancel={() => {
+              selectionLassoRef.current = null;
+              selectionStartRef.current = null;
+              setSelectionLasso(null);
+            }}
+          />
+        )}
+
         {/* 그룹 배경 레이어 (모듈 아래) */}
         <GroupLayer boardId={boardId} viewport={viewport} />
 
@@ -603,8 +846,12 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
               boardId={boardId}
               viewport={viewport}
               isSelected={selectedModuleId === module.id}
-              onSelect={setSelectedModuleId}
+              onSelect={(id) => { setSelectedModuleId(id); setSelectedMultiIds([]); }}
               onDeselect={() => setSelectedModuleId(null)}
+              isMultiSelected={selectedMultiIds.includes(module.id)}
+              onMultiDragStart={selectedMultiIds.includes(module.id) ? handleMultiDragStart : undefined}
+              onMultiDragMove={selectedMultiIds.includes(module.id) ? handleMultiDragMove : undefined}
+              onShiftSelect={handleShiftSelect}
             />
           ))}
       </div>
@@ -671,6 +918,15 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
           groupCount={(board.groups ?? []).length}
           onConfirm={handleGroupConfirm}
           onCancel={() => { setShowGroupDialog(false); setPendingModuleIds([]); setPendingBounds(null); }}
+        />
+      )}
+
+      {/* 그룹 초대 다이얼로그 */}
+      {pendingGroupInvite && (
+        <GroupInviteDialog
+          groupName={pendingGroupInvite.groupName}
+          onConfirm={handleGroupInviteConfirm}
+          onCancel={handleGroupInviteCancel}
         />
       )}
     </div>

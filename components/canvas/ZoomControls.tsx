@@ -54,6 +54,7 @@ export default function ZoomControls({
 
   return (
     <div
+      data-zoom-controls="true"
       style={{
         position: "absolute",
         bottom: 20,

@@ -46,6 +46,16 @@ export default function GroupLayer({ boardId, viewport, onDoubleClickGroup }: Gr
     origModulePositions: { id: string; x: number; y: number }[];
   } | null>(null);
 
+  const resizeRef = useRef<{
+    groupId: string;
+    handle: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origPos: { x: number; y: number };
+    origSize: { width: number; height: number };
+  } | null>(null);
+
   const groups = board?.groups ?? [];
   if (groups.length === 0) return null;
 
@@ -120,6 +130,64 @@ export default function GroupLayer({ boardId, viewport, onDoubleClickGroup }: Gr
     if (dragRef.current.pointerId !== e.pointerId) return;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     dragRef.current = null;
+  }
+
+  const MIN_SIZE = 120;
+
+  function handleResizeStart(
+    e: React.PointerEvent,
+    g: Group,
+    handle: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw"
+  ) {
+    e.stopPropagation();
+    e.preventDefault();
+    resizeRef.current = {
+      groupId: g.id,
+      handle,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origPos: { x: g.position.x, y: g.position.y },
+      origSize: { width: g.size.width, height: g.size.height },
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function handleResizeMove(e: React.PointerEvent) {
+    if (!resizeRef.current) return;
+    if (resizeRef.current.pointerId !== e.pointerId) return;
+
+    const { handle, startX, startY, origPos, origSize, groupId } = resizeRef.current;
+    const dx = (e.clientX - startX) / viewport.zoom;
+    const dy = (e.clientY - startY) / viewport.zoom;
+
+    let newX = origPos.x;
+    let newY = origPos.y;
+    let newW = origSize.width;
+    let newH = origSize.height;
+
+    if (handle.includes("e")) newW = Math.max(MIN_SIZE, origSize.width + dx);
+    if (handle.includes("s")) newH = Math.max(MIN_SIZE, origSize.height + dy);
+    if (handle.includes("w")) {
+      newW = Math.max(MIN_SIZE, origSize.width - dx);
+      newX = origPos.x + (origSize.width - newW);
+    }
+    if (handle.includes("n")) {
+      newH = Math.max(MIN_SIZE, origSize.height - dy);
+      newY = origPos.y + (origSize.height - newH);
+    }
+
+    updateGroup(boardId, groupId, {
+      position: { x: newX, y: newY },
+      size: { width: newW, height: newH },
+    });
+  }
+
+  function handleResizeEnd(e: React.PointerEvent) {
+    if (!resizeRef.current) return;
+    if (resizeRef.current.pointerId !== e.pointerId) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    resizeRef.current = null;
   }
 
   return (
@@ -225,6 +293,26 @@ export default function GroupLayer({ boardId, viewport, onDoubleClickGroup }: Gr
 
         // ── 확장된 그룹 배경 rect ──────────────────────────────────────
         const PAD = 16;
+
+        function resizeHandleStyle(
+          handle: "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw"
+        ): React.CSSProperties {
+          const H = 10; // handle size
+          const half = H / 2;
+          const pos: React.CSSProperties = { position: "absolute", width: H, height: H, borderRadius: 2, background: colorDef.border, border: "1.5px solid white", boxShadow: "0 1px 3px rgba(0,0,0,0.3)", zIndex: 10 };
+          switch (handle) {
+            case "nw": return { ...pos, top: -half, left: -half, cursor: "nw-resize" };
+            case "n":  return { ...pos, top: -half, left: "calc(50% - 5px)", cursor: "n-resize" };
+            case "ne": return { ...pos, top: -half, right: -half, cursor: "ne-resize" };
+            case "e":  return { ...pos, top: "calc(50% - 5px)", right: -half, cursor: "e-resize" };
+            case "se": return { ...pos, bottom: -half, right: -half, cursor: "se-resize" };
+            case "s":  return { ...pos, bottom: -half, left: "calc(50% - 5px)", cursor: "s-resize" };
+            case "sw": return { ...pos, bottom: -half, left: -half, cursor: "sw-resize" };
+            case "w":  return { ...pos, top: "calc(50% - 5px)", left: -half, cursor: "w-resize" };
+            default:   return { ...pos };
+          }
+        }
+
         return (
           <div
             key={g.id}
@@ -351,6 +439,17 @@ export default function GroupLayer({ boardId, viewport, onDoubleClickGroup }: Gr
                 ✕
               </button>
             </div>
+            {/* 리사이즈 핸들 (8방향) */}
+            {(["nw","n","ne","e","se","s","sw","w"] as const).map((handle) => (
+              <div
+                key={handle}
+                style={{ ...resizeHandleStyle(handle), pointerEvents: "all" }}
+                onPointerDown={(e) => handleResizeStart(e, g, handle)}
+                onPointerMove={handleResizeMove}
+                onPointerUp={handleResizeEnd}
+                onPointerCancel={handleResizeEnd}
+              />
+            ))}
           </div>
         );
       })}

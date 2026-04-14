@@ -24,6 +24,10 @@ interface ModuleCardWrapperProps {
   isSelected: boolean;
   onSelect: (id: string) => void;
   onDeselect: () => void;
+  isMultiSelected?: boolean;
+  onMultiDragStart?: () => void;
+  onMultiDragMove?: (dx: number, dy: number) => void;
+  onShiftSelect?: (id: string) => void;
 }
 
 /** 두 모듈의 중심 위치를 기반으로 최적 toAnchor 계산 */
@@ -47,6 +51,10 @@ export default function ModuleCardWrapper({
   isSelected,
   onSelect,
   onDeselect,
+  isMultiSelected = false,
+  onMultiDragStart,
+  onMultiDragMove,
+  onShiftSelect,
 }: ModuleCardWrapperProps) {
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
@@ -77,6 +85,7 @@ export default function ModuleCardWrapper({
     moduleY: number;
   } | null>(null);
   const didDragRef = useRef(false);
+  const multiDragStartedRef = useRef(false);
 
   // 실제 렌더링 높이를 store에 동기화 (앵커 위치 계산 정확도 향상)
   useEffect(() => {
@@ -159,20 +168,28 @@ export default function ModuleCardWrapper({
       if (!isDragging && Math.sqrt(dx * dx + dy * dy) > 5) {
         setIsDragging(true);
         didDragRef.current = true;
+        if (isMultiSelected && onMultiDragStart && !multiDragStartedRef.current) {
+          multiDragStartedRef.current = true;
+          onMultiDragStart();
+        }
       }
 
       if (isDragging) {
         const canvasDx = dx / viewport.zoom;
         const canvasDy = dy / viewport.zoom;
-        updateModule(boardId, module.id, {
-          position: {
-            x: dragStartRef.current.moduleX + canvasDx,
-            y: dragStartRef.current.moduleY + canvasDy,
-          },
-        });
+        if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
+          onMultiDragMove(canvasDx, canvasDy);
+        } else {
+          updateModule(boardId, module.id, {
+            position: {
+              x: dragStartRef.current.moduleX + canvasDx,
+              y: dragStartRef.current.moduleY + canvasDy,
+            },
+          });
+        }
       }
     },
-    [isDragging, viewport.zoom, boardId, module.id, updateModule]
+    [isDragging, viewport.zoom, boardId, module.id, updateModule, isMultiSelected, onMultiDragStart, onMultiDragMove]
   );
 
   // ── 포인터 업: 드래그 종료 ───────────────────────────────────
@@ -182,6 +199,7 @@ export default function ModuleCardWrapper({
       if (dragStartRef.current.pointerId !== e.pointerId) return;
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       dragStartRef.current = null;
+      multiDragStartedRef.current = false;
       setIsDragging(false);
     },
     []
@@ -249,6 +267,12 @@ export default function ModuleCardWrapper({
         const toAnchor = fromMod ? getBestToAnchor(fromMod, module) : "left";
         finishConnecting(module.id, toAnchor);
       }
+      return;
+    }
+
+    // Shift+클릭 → 다중 선택에 추가/제거
+    if (e.shiftKey && onShiftSelect) {
+      onShiftSelect(module.id);
       return;
     }
 
@@ -324,6 +348,8 @@ export default function ModuleCardWrapper({
             ? "grabbing"
             : "grab",
           touchAction: "none",
+          outline: isMultiSelected ? "2px solid rgb(59,130,246)" : undefined,
+          borderRadius: isMultiSelected ? 14 : undefined,
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

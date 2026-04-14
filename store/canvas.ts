@@ -41,6 +41,15 @@ interface CanvasStore {
   removeGroup(boardId: string, groupId: string): void;
   updateGroup(boardId: string, groupId: string, updates: Partial<Group>): void;
 
+  // 그룹 초대 (연결 생성 시)
+  pendingGroupInvite: {
+    groupId: string;
+    groupName: string;
+    candidateModuleId: string;
+    boardId: string;
+  } | null;
+  clearGroupInvite(): void;
+
   // 그룹 포커스 (사이드바 → 캔버스 네비게이션)
   focusGroupId: string | null;
   setFocusGroup(groupId: string | null): void;
@@ -119,6 +128,38 @@ async function pushBoardToSupabase(
       }))
     );
   }
+
+  // groups upsert
+  const groups = board.groups ?? [];
+  if (groups.length > 0) {
+    await supabase.from("groups").upsert(
+      groups.map((g) => ({
+        id: g.id,
+        board_id: board.id,
+        user_id: userId,
+        name: g.name,
+        module_ids: g.moduleIds,
+        position: g.position,
+        size: g.size,
+        color: g.color,
+        is_collapsed: g.isCollapsed,
+        created_at: g.createdAt,
+        updated_at: g.updatedAt,
+      }))
+    );
+  }
+
+  // DB에서 삭제된 그룹 제거 (현재 목록에 없는 것)
+  if (groups.length > 0) {
+    await supabase
+      .from("groups")
+      .delete()
+      .eq("board_id", board.id)
+      .not("id", "in", `(${groups.map((g) => g.id).join(",")})`);
+  } else {
+    // 그룹이 하나도 없으면 이 보드의 모든 그룹 삭제
+    await supabase.from("groups").delete().eq("board_id", board.id);
+  }
 }
 
 // ── 스토어 ───────────────────────────────────────────────────────────────
@@ -127,6 +168,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   boards: [],
   activeBoardId: null,
   focusGroupId: null,
+  pendingGroupInvite: null,
 
   hydrate() {
     const appData = loadAppData();
@@ -193,6 +235,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       .select("*")
       .eq("user_id", userId);
 
+    const { data: groupRows } = await supabase
+      .from("groups")
+      .select("*")
+      .eq("user_id", userId);
+
     const boards: Board[] = boardRows.map((b) => ({
       id: b.id,
       name: b.name,
@@ -227,7 +274,19 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           style: c.style as Connection["style"],
           color: c.color,
         })),
-      groups: [],
+      groups: (groupRows ?? [])
+        .filter((g) => g.board_id === b.id)
+        .map((g) => ({
+          id: g.id,
+          name: g.name,
+          moduleIds: g.module_ids as string[],
+          position: g.position as Group["position"],
+          size: g.size as Group["size"],
+          color: g.color as Group["color"],
+          isCollapsed: g.is_collapsed,
+          createdAt: g.created_at,
+          updatedAt: g.updated_at,
+        })),
     }));
 
     // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
@@ -255,6 +314,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   // ─── 보드 CRUD ─────────────────────────────────────────────────────────
+
+  clearGroupInvite() {
+    set({ pendingGroupInvite: null });
+  },
 
   setFocusGroup(groupId) {
     set({ focusGroupId: groupId });
@@ -437,17 +500,44 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       id: uuidv4(),
     };
 
-    set((state) => ({
-      boards: state.boards.map((b) =>
-        b.id === boardId
-          ? {
-              ...b,
-              connections: [...b.connections, newConnection],
-              updatedAt: getTimestamp(),
-            }
-          : b
-      ),
-    }));
+    set((state) => {
+      const board = state.boards.find((b) => b.id === boardId);
+      const groups = board?.groups ?? [];
+
+      const fromGroup = groups.find((g) => g.moduleIds.includes(connectionInput.fromModuleId));
+      const toGroup = groups.find((g) => g.moduleIds.includes(connectionInput.toModuleId));
+
+      let pendingGroupInvite: CanvasStore["pendingGroupInvite"] = null;
+
+      if (fromGroup && !fromGroup.moduleIds.includes(connectionInput.toModuleId)) {
+        pendingGroupInvite = {
+          groupId: fromGroup.id,
+          groupName: fromGroup.name,
+          candidateModuleId: connectionInput.toModuleId,
+          boardId,
+        };
+      } else if (toGroup && !toGroup.moduleIds.includes(connectionInput.fromModuleId)) {
+        pendingGroupInvite = {
+          groupId: toGroup.id,
+          groupName: toGroup.name,
+          candidateModuleId: connectionInput.fromModuleId,
+          boardId,
+        };
+      }
+
+      return {
+        boards: state.boards.map((b) =>
+          b.id === boardId
+            ? {
+                ...b,
+                connections: [...b.connections, newConnection],
+                updatedAt: getTimestamp(),
+              }
+            : b
+        ),
+        pendingGroupInvite,
+      };
+    });
 
     debouncedSave?.();
     debouncedSupabaseSync?.();
@@ -483,6 +573,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   removeGroup(boardId, groupId) {
@@ -494,6 +585,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
+    createClient().from("groups").delete().eq("id", groupId).then(() => {});
   },
 
   updateGroup(boardId, groupId, updates) {
@@ -511,6 +603,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   // ─── 뷰포트 ────────────────────────────────────────────────────────────
