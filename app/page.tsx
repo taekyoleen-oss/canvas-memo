@@ -6,8 +6,10 @@ import { useAuthStore } from "@/store/auth";
 import TopHeader from "@/components/layout/TopHeader";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import Sidebar from "@/components/layout/Sidebar";
+import MobileDrawer from "@/components/layout/MobileDrawer";
 import Canvas from "@/components/canvas/Canvas";
 import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
+import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 
 interface AddBoardDialogProps {
   isOpen: boolean;
@@ -129,6 +131,8 @@ export default function Home() {
     useCanvasStore();
   const { user, init: initAuth } = useAuthStore();
   const [showAddBoard, setShowAddBoard] = useState(false);
+  const [showMobileDrawer, setShowMobileDrawer] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   // auth 초기화 (1회)
@@ -146,6 +150,18 @@ export default function Home() {
     initSupabaseSync(user.id);
     hydrateFromSupabase(user.id);
   }, [user, hydrateFromSupabase]);
+
+  // Ctrl+K: 검색 열기
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setShowSearch((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const activeBoard = boards.find((b) => b.id === activeBoardId);
 
@@ -172,11 +188,13 @@ export default function Home() {
       x: 80 + Math.random() * 200,
       y: 80 + Math.random() * 120,
     };
+    const activeBoard = boards.find((b) => b.id === activeBoardId);
+    const maxZIndex = activeBoard?.modules.reduce((max, m) => Math.max(max, m.zIndex), 0) ?? 0;
     addModule(activeBoardId, {
       type,
       position: pos,
       size: { width: 260, height: 200 },
-      zIndex: 1,
+      zIndex: maxZIndex + 1,
       color: "default",
       isExpanded: false,
       data: defaultData,
@@ -243,8 +261,9 @@ export default function Home() {
         <TopHeader
           boardName={activeBoard?.name ?? "보드"}
           onAddModule={() => handleAddModule("memo")}
+          onMenuClick={() => setShowMobileDrawer(true)}
         />
-        {activeBoardId && <ModuleToolbar onAdd={handleAddModule} />}
+        {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
         <div className="flex-1 relative overflow-hidden">
           {activeBoardId ? (
             <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
@@ -276,7 +295,7 @@ export default function Home() {
           onAdd={() => setShowAddBoard(true)}
         />
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeBoardId && <ModuleToolbar onAdd={handleAddModule} />}
+          {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
           <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
               <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
@@ -296,6 +315,19 @@ export default function Home() {
         isOpen={showAddBoard}
         onClose={() => setShowAddBoard(false)}
         onConfirm={handleAddBoard}
+      />
+
+      {/* 모듈 검색 */}
+      <ModuleSearch isOpen={showSearch} onClose={() => setShowSearch(false)} />
+
+      {/* 모바일 드로어 */}
+      <MobileDrawer
+        isOpen={showMobileDrawer}
+        onClose={() => setShowMobileDrawer(false)}
+        boards={boards}
+        activeBoardId={activeBoardId}
+        onSelect={(id) => { setActiveBoard(id); }}
+        onAdd={() => setShowAddBoard(true)}
       />
     </>
   );

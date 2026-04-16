@@ -9,6 +9,7 @@ interface ModuleCardProps {
   children: React.ReactNode;
   onContextMenu?: (rect: DOMRect) => void;
   onToggleExpand?: () => void;
+  onToggleMinimize?: () => void;
   onTitleChange?: (title: string) => void;
   onFullView?: () => void;
 }
@@ -39,9 +40,11 @@ export default function ModuleCard({
   children,
   onContextMenu,
   onToggleExpand,
+  onToggleMinimize,
   onTitleChange,
   onFullView,
 }: ModuleCardProps) {
+  const isMinimized = !!module.isMinimized;
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
 
   let borderStyle: string;
@@ -77,12 +80,12 @@ export default function ModuleCard({
         className="flex items-center gap-2 px-3"
         style={{
           height: 44,
-          borderBottom: "1px solid var(--border)",
+          borderBottom: isMinimized ? "none" : "1px solid var(--border)",
           flexShrink: 0,
         }}
       >
         <span style={{ fontSize: 15 }}>{MODULE_TYPE_ICON[module.type]}</span>
-        {module.isExpanded && onTitleChange ? (
+        {module.isExpanded && !isMinimized && onTitleChange ? (
           <input
             type="text"
             value={(module.data as { title?: string }).title ?? ""}
@@ -100,11 +103,49 @@ export default function ModuleCard({
         ) : (
           <span
             className="flex-1 font-medium truncate text-sm"
-            style={{ color: "var(--text-primary)" }}
+            style={{ color: "var(--text-primary)", cursor: "default" }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onToggleMinimize?.();
+            }}
+            title="더블클릭: 최소화/복원"
           >
             {getModuleTitle(module)}
           </span>
         )}
+
+        {/* 최소화 버튼 */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleMinimize?.();
+          }}
+          className="flex items-center justify-center rounded"
+          style={{
+            width: 24,
+            height: 24,
+            background: isMinimized ? "var(--primary-soft)" : "transparent",
+            border: isMinimized ? "1px solid var(--primary)" : "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            color: isMinimized ? "var(--primary)" : "var(--text-muted)",
+            fontSize: 13,
+            flexShrink: 0,
+            transition: "all 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            if (!isMinimized)
+              (e.currentTarget as HTMLElement).style.background = "var(--surface-hover)";
+          }}
+          onMouseLeave={(e) => {
+            if (!isMinimized)
+              (e.currentTarget as HTMLElement).style.background = "transparent";
+          }}
+          aria-label={isMinimized ? "복원" : "최소화"}
+          title={isMinimized ? "복원" : "최소화 (제목만 표시)"}
+        >
+          {isMinimized ? "□" : "─"}
+        </button>
 
         {/* 메뉴 버튼 */}
         <button
@@ -130,75 +171,80 @@ export default function ModuleCard({
         </button>
       </div>
 
-      {/* 내용 */}
-      <div className="flex flex-col">{children}</div>
+      {/* 내용 + 하단 탭: 최소화 시 숨김 */}
+      {!isMinimized && (
+        <>
+          {/* 내용 */}
+          <div className="flex flex-col">{children}</div>
 
-      {/* 펼치기/접기 + 전체 보기 탭 */}
-      <div
-        className="flex"
-        style={{
-          borderTop: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleExpand?.();
-          }}
-          className="flex items-center justify-center gap-1 flex-1"
-          style={{
-            height: 28,
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            color: "var(--text-muted)",
-            fontSize: 11,
-            transition: "background 0.12s",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLElement).style.background =
-              "var(--surface-hover)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLElement).style.background = "transparent")
-          }
-          aria-label={module.isExpanded ? "접기" : "더보기"}
-        >
-          <span style={{ transition: "transform 0.2s", display: "inline-block", transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
-          <span>{module.isExpanded ? "접기" : "더보기"}</span>
-        </button>
+          {/* 펼치기/접기 + 전체 보기 탭 */}
+          <div
+            className="flex"
+            style={{
+              borderTop: "1px solid var(--border)",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleExpand?.();
+              }}
+              className="flex items-center justify-center gap-1 flex-1"
+              style={{
+                height: 28,
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--text-muted)",
+                fontSize: 11,
+                transition: "background 0.12s",
+              }}
+              onMouseEnter={(e) =>
+                ((e.currentTarget as HTMLElement).style.background =
+                  "var(--surface-hover)")
+              }
+              onMouseLeave={(e) =>
+                ((e.currentTarget as HTMLElement).style.background = "transparent")
+              }
+              aria-label={module.isExpanded ? "접기" : "더보기"}
+            >
+              <span style={{ transition: "transform 0.2s", display: "inline-block", transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+              <span>{module.isExpanded ? "접기" : "더보기"}</span>
+            </button>
 
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onFullView?.();
-          }}
-          className="flex items-center justify-center gap-1"
-          style={{
-            height: 28,
-            paddingInline: 10,
-            background: "transparent",
-            border: "none",
-            borderLeft: "1px solid var(--border)",
-            cursor: "pointer",
-            color: "var(--text-muted)",
-            fontSize: 11,
-            transition: "background 0.12s",
-            whiteSpace: "nowrap",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLElement).style.background =
-              "var(--surface-hover)")
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLElement).style.background = "transparent")
-          }
-          aria-label="전체 보기"
-        >
-          ⛶ 전체 보기
-        </button>
-      </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onFullView?.();
+              }}
+              className="flex items-center justify-center gap-1"
+              style={{
+                height: 28,
+                paddingInline: 10,
+                background: "transparent",
+                border: "none",
+                borderLeft: "1px solid var(--border)",
+                cursor: "pointer",
+                color: "var(--text-muted)",
+                fontSize: 11,
+                transition: "background 0.12s",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) =>
+                ((e.currentTarget as HTMLElement).style.background =
+                  "var(--surface-hover)")
+              }
+              onMouseLeave={(e) =>
+                ((e.currentTarget as HTMLElement).style.background = "transparent")
+              }
+              aria-label="전체 보기"
+            >
+              ⛶ 전체 보기
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

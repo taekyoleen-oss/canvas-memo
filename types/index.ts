@@ -40,6 +40,7 @@ export interface Module {
   zIndex: number;
   color: ModuleColor;
   isExpanded: boolean;
+  isMinimized?: boolean; // 제목만 표시하는 최소화 상태
   createdAt: string;
   updatedAt: string;
   data: MemoData | ScheduleData | ImageData | LinkData | FileData;

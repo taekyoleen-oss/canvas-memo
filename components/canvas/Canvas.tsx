@@ -161,20 +161,30 @@ function GroupInviteDialog({ groupName, onConfirm, onCancel }: GroupInviteDialog
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-2xl p-6 w-80 flex flex-col gap-4">
-        <p className="text-sm font-medium text-[var(--text-primary)] text-center">
-          <span className="font-bold text-[var(--primary)]">&#39;{groupName}&#39;</span> 그룹에 추가하시겠습니까?
+      <div
+        className="relative rounded-2xl p-6 flex flex-col gap-4"
+        style={{
+          width: 320,
+          background: "var(--surface-elevated)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-lg)",
+        }}
+      >
+        <p className="text-sm font-medium text-center" style={{ color: "var(--text-primary)" }}>
+          <span style={{ fontWeight: 700, color: "var(--primary)" }}>&#39;{groupName}&#39;</span> 그룹에 추가하시겠습니까?
         </p>
         <div className="flex gap-2">
           <button
             onClick={onCancel}
-            className="flex-1 py-2 rounded-xl border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors"
+            className="flex-1 py-2 rounded-xl text-sm transition-colors"
+            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
           >
             연결만
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2 rounded-xl bg-[var(--primary)] text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+            className="flex-1 py-2 rounded-xl text-sm font-semibold transition-opacity"
+            style={{ background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer" }}
           >
             그룹에 추가
           </button>
@@ -194,6 +204,10 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const focusGroupId = useCanvasStore((s) => s.focusGroupId);
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
+  const focusModuleId = useCanvasStore((s) => s.focusModuleId);
+  const setFocusModule = useCanvasStore((s) => s.setFocusModule);
+  const undo = useCanvasStore((s) => s.undo);
+  const pushHistory = useCanvasStore((s) => s.pushHistory);
   const pendingGroupInvite = useCanvasStore((s) => s.pendingGroupInvite);
   const clearGroupInvite = useCanvasStore((s) => s.clearGroupInvite);
   const cancelConnecting = useConnectionStore((s) => s.cancelConnecting);
@@ -378,6 +392,26 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     setFocusGroup(null);
   }, [focusGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 검색에서 모듈 포커스 요청 처리 ────────────────────────────────
+  useEffect(() => {
+    if (!focusModuleId || !board) return;
+    const m = board.modules.find((mod) => mod.id === focusModuleId);
+    if (!m) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+    const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, 1));
+    const vp = {
+      x: W / 2 - (m.position.x + m.size.width / 2) * zoom,
+      y: H / 2 - (m.position.y + m.size.height / 2) * zoom,
+      zoom,
+    };
+    setViewport(vp);
+    updateViewport(boardId, vp);
+    setFocusModule(null);
+  }, [focusModuleId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── 키보드 단축키 ────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -399,16 +433,30 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         return;
       }
 
-      if ((e.key === "Delete" || e.key === "Backspace") && selectedModuleId && !isTyping) {
-        if (window.confirm("선택한 모듈을 삭제하시겠습니까?")) {
-          removeModule(boardId, selectedModuleId);
-          setSelectedModuleId(null);
+      // Ctrl+Z: 실행취소
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !isTyping) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      if ((e.key === "Delete" || e.key === "Backspace") && !isTyping) {
+        if (selectedMultiIds.length > 0) {
+          if (window.confirm(`선택한 ${selectedMultiIds.length}개 모듈을 삭제하시겠습니까?`)) {
+            selectedMultiIds.forEach((id) => removeModule(boardId, id));
+            setSelectedMultiIds([]);
+          }
+        } else if (selectedModuleId) {
+          if (window.confirm("선택한 모듈을 삭제하시겠습니까?")) {
+            removeModule(boardId, selectedModuleId);
+            setSelectedModuleId(null);
+          }
         }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedModuleId, boardId, cancelConnecting, removeModule]);
+  }, [selectedModuleId, selectedMultiIds, boardId, cancelConnecting, removeModule, undo]);
 
   // ── 커넥션 프리뷰 포인터 이동 ───────────────────────────────────
   function handlePointerMove(e: React.PointerEvent) {

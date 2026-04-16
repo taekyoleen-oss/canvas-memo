@@ -22,20 +22,30 @@ function DeleteConnectionDialog({ onConfirm, onCancel }: DeleteDialogProps) {
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-2xl p-6 w-72 flex flex-col gap-4">
-        <p className="text-sm font-medium text-[var(--text-primary)] text-center">
+      <div
+        className="relative rounded-2xl p-6 flex flex-col gap-4"
+        style={{
+          width: 288,
+          background: "var(--surface-elevated)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-lg)",
+        }}
+      >
+        <p className="text-sm font-medium text-center" style={{ color: "var(--text-primary)" }}>
           이 연결을 삭제하시겠습니까?
         </p>
         <div className="flex gap-2">
           <button
             onClick={onCancel}
-            className="flex-1 py-2 rounded-xl border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors"
+            className="flex-1 py-2 rounded-xl text-sm transition-colors"
+            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
           >
             취소
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2 rounded-xl bg-red-500 text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+            className="flex-1 py-2 rounded-xl text-sm font-semibold transition-opacity"
+            style={{ background: "#EF4444", color: "#fff", border: "none", cursor: "pointer" }}
           >
             삭제
           </button>
@@ -56,20 +66,30 @@ function GroupRemoveDialog({ groupName, onConfirm, onCancel }: GroupRemoveDialog
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative bg-white rounded-2xl shadow-2xl p-6 w-80 flex flex-col gap-4">
-        <p className="text-sm font-medium text-[var(--text-primary)] text-center">
-          <span className="font-bold text-[var(--primary)]">&#39;{groupName}&#39;</span> 그룹에서도 제거하시겠습니까?
+      <div
+        className="relative rounded-2xl p-6 flex flex-col gap-4"
+        style={{
+          width: 320,
+          background: "var(--surface-elevated)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-lg)",
+        }}
+      >
+        <p className="text-sm font-medium text-center" style={{ color: "var(--text-primary)" }}>
+          <span style={{ fontWeight: 700, color: "var(--primary)" }}>&#39;{groupName}&#39;</span> 그룹에서도 제거하시겠습니까?
         </p>
         <div className="flex gap-2">
           <button
             onClick={onCancel}
-            className="flex-1 py-2 rounded-xl border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-2)] transition-colors"
+            className="flex-1 py-2 rounded-xl text-sm transition-colors"
+            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
           >
             그룹 유지
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 py-2 rounded-xl bg-red-500 text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+            className="flex-1 py-2 rounded-xl text-sm font-semibold transition-opacity"
+            style={{ background: "#EF4444", color: "#fff", border: "none", cursor: "pointer" }}
           >
             그룹 제거
           </button>
@@ -79,11 +99,23 @@ function GroupRemoveDialog({ groupName, onConfirm, onCancel }: GroupRemoveDialog
   );
 }
 
+const CONNECTION_COLORS = [
+  { label: "기본", value: "" },
+  { label: "빨강", value: "#EF4444" },
+  { label: "초록", value: "#22C55E" },
+  { label: "파랑", value: "#6366F1" },
+  { label: "주황", value: "#F97316" },
+  { label: "보라", value: "#A855F7" },
+];
+
 export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerProps) {
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const removeConnection = useCanvasStore((s) => s.removeConnection);
+  const updateConnection = useCanvasStore((s) => s.updateConnection);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  // 편집 패널 위치 (캔버스 좌표)
+  const [editPanelPos, setEditPanelPos] = useState<{ x: number; y: number } | null>(null);
 
   // 삭제 확인 dialog 상태
   const [pendingDelete, setPendingDelete] = useState<{
@@ -121,17 +153,15 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
   const badgeH = 22 / viewport.zoom;
   const badgeRx = 11 / viewport.zoom;
 
-  function handleConnectionClick(e: React.MouseEvent, connection: Connection) {
+  function handleConnectionClick(e: React.MouseEvent, connection: Connection, midX: number, midY: number) {
     e.stopPropagation();
     if (selectedConnectionId === connection.id) {
-      // 삭제 dialog 열기
-      setPendingDelete({
-        connectionId: connection.id,
-        fromModuleId: connection.fromModuleId,
-        toModuleId: connection.toModuleId,
-      });
+      // 이미 선택된 상태에서 다시 클릭 → 편집 패널 토글 (닫기)
+      setSelectedConnectionId(null);
+      setEditPanelPos(null);
     } else {
       setSelectedConnectionId(connection.id);
+      setEditPanelPos({ x: midX, y: midY });
     }
   }
 
@@ -283,7 +313,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                   stroke="transparent"
                   strokeWidth={hitSw}
                   style={{ pointerEvents: "stroke", cursor: "pointer" }}
-                  onClick={(e) => handleConnectionClick(e, connection)}
+                  onClick={(e) => handleConnectionClick(e, connection, midX, midY)}
                 />
                 {/* 실제 선 */}
                 <path
@@ -298,38 +328,171 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                   markerEnd={isSelected ? "url(#arrowhead-selected)" : "url(#arrowhead)"}
                   style={{ pointerEvents: "none" }}
                 />
-                {/* 선택 시: 삭제 버튼 배지 */}
-                {isSelected && (
-                  <g
-                    style={{ pointerEvents: "all", cursor: "pointer" }}
-                    onClick={(e) => handleConnectionClick(e, connection)}
-                  >
+                {/* 라벨 텍스트 */}
+                {connection.label && (
+                  <g style={{ pointerEvents: "none" }}>
                     <rect
                       x={midX - badgeW / 2}
                       y={midY - badgeH / 2}
                       width={badgeW}
                       height={badgeH}
                       rx={badgeRx}
-                      fill="var(--primary)"
+                      fill="var(--surface-elevated)"
+                      stroke={strokeColor}
+                      strokeWidth={sw * 0.6}
+                      opacity={0.95}
                     />
                     <text
                       x={midX}
-                      y={midY + badgeFontSize * 0.4}
+                      y={midY}
                       textAnchor="middle"
+                      dominantBaseline="central"
                       fontSize={badgeFontSize}
-                      fontWeight={600}
-                      fill="white"
-                      style={{ userSelect: "none" }}
+                      fill={isSelected ? "var(--primary)" : "var(--text-primary)"}
+                      fontWeight={isSelected ? "600" : "400"}
                     >
-                      ✕ 삭제
+                      {connection.label.length > 8
+                        ? connection.label.slice(0, 7) + "…"
+                        : connection.label}
                     </text>
                   </g>
+                )}
+                {/* 선택 시: 라벨 없을 때만 편집 표시 점 */}
+                {isSelected && !connection.label && (
+                  <circle
+                    cx={midX}
+                    cy={midY}
+                    r={5 / zoom}
+                    fill="var(--primary)"
+                    style={{ pointerEvents: "none" }}
+                  />
                 )}
               </g>
             );
           })}
         </g>
       </svg>
+
+      {/* 연결 편집 패널 */}
+      {selectedConnectionId && editPanelPos && (() => {
+        const conn = board.connections.find((c) => c.id === selectedConnectionId);
+        if (!conn) return null;
+        const { x: vx, y: vy, zoom } = viewport;
+        const screenX = editPanelPos.x * zoom + vx;
+        const screenY = editPanelPos.y * zoom + vy;
+        return (
+          <div
+            style={{
+              position: "absolute",
+              left: screenX,
+              top: screenY + 14,
+              transform: "translateX(-50%)",
+              zIndex: 60,
+              background: "var(--surface-elevated)",
+              border: "1px solid var(--border)",
+              borderRadius: 12,
+              boxShadow: "var(--shadow-lg)",
+              padding: "10px 12px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              minWidth: 200,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 라벨 입력 */}
+            <input
+              type="text"
+              value={conn.label ?? ""}
+              onChange={(e) => updateConnection(boardId, conn.id, { label: e.target.value })}
+              placeholder="연결 라벨 (선택)"
+              style={{
+                height: 30,
+                padding: "0 8px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text-primary)",
+                fontSize: 12,
+                outline: "none",
+                width: "100%",
+              }}
+            />
+
+            {/* 스타일: 실선/점선 */}
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["solid", "dashed"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => updateConnection(boardId, conn.id, { style: s })}
+                  style={{
+                    flex: 1,
+                    height: 28,
+                    borderRadius: 6,
+                    border: (conn.style ?? "solid") === s
+                      ? "2px solid var(--primary)"
+                      : "1px solid var(--border)",
+                    background: (conn.style ?? "solid") === s ? "var(--primary-soft)" : "transparent",
+                    cursor: "pointer",
+                    fontSize: 11,
+                    color: (conn.style ?? "solid") === s ? "var(--primary)" : "var(--text-secondary)",
+                    fontWeight: (conn.style ?? "solid") === s ? 600 : 400,
+                  }}
+                >
+                  {s === "solid" ? "실선" : "점선"}
+                </button>
+              ))}
+            </div>
+
+            {/* 색상 선택 */}
+            <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+              {CONNECTION_COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  title={c.label}
+                  onClick={() => updateConnection(boardId, conn.id, { color: c.value })}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: "50%",
+                    border: (conn.color ?? "") === c.value
+                      ? "3px solid var(--text-primary)"
+                      : "2px solid var(--border)",
+                    background: c.value || "var(--connection-default)",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* 삭제 버튼 */}
+            <button
+              onClick={() => {
+                setPendingDelete({
+                  connectionId: conn.id,
+                  fromModuleId: conn.fromModuleId,
+                  toModuleId: conn.toModuleId,
+                });
+                setSelectedConnectionId(null);
+                setEditPanelPos(null);
+              }}
+              style={{
+                height: 28,
+                borderRadius: 6,
+                border: "none",
+                background: "#EF4444",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              연결 삭제
+            </button>
+          </div>
+        );
+      })()}
 
       {/* 연결 삭제 확인 dialog */}
       {pendingDelete && (

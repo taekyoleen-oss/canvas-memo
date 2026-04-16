@@ -93,6 +93,10 @@ export default function ModuleCardWrapper({
   const didDragRef = useRef(false);
   const multiDragStartedRef = useRef(false);
 
+  // RAF 스로틀: 드래그 중 매 프레임 1회만 store 업데이트
+  const rafRef = useRef<number | null>(null);
+  const pendingMoveRef = useRef<{ canvasDx: number; canvasDy: number } | null>(null);
+
   // 실제 렌더링 높이를 store에 동기화 (앵커 위치 계산 정확도 향상)
   useEffect(() => {
     const el = wrapperRef.current;
@@ -172,6 +176,7 @@ export default function ModuleCardWrapper({
       const dy = e.clientY - dragStartRef.current.pointerY;
 
       if (!isDragging && Math.sqrt(dx * dx + dy * dy) > 5) {
+        useCanvasStore.getState().pushHistory();
         setIsDragging(true);
         didDragRef.current = true;
         if (isMultiSelected && onMultiDragStart && !multiDragStartedRef.current) {
@@ -183,14 +188,25 @@ export default function ModuleCardWrapper({
       if (isDragging) {
         const canvasDx = dx / viewport.zoom;
         const canvasDy = dy / viewport.zoom;
-        if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
-          onMultiDragMove(canvasDx, canvasDy);
-        } else {
-          updateModule(boardId, module.id, {
-            position: {
-              x: dragStartRef.current.moduleX + canvasDx,
-              y: dragStartRef.current.moduleY + canvasDy,
-            },
+
+        // RAF 스로틀: 매 프레임 1회만 store 업데이트 → INP 개선
+        pendingMoveRef.current = { canvasDx, canvasDy };
+        if (!rafRef.current) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            const move = pendingMoveRef.current;
+            const start = dragStartRef.current;
+            if (!move || !start) return;
+            if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
+              onMultiDragMove(move.canvasDx, move.canvasDy);
+            } else {
+              updateModule(boardId, module.id, {
+                position: {
+                  x: start.moduleX + move.canvasDx,
+                  y: start.moduleY + move.canvasDy,
+                },
+              });
+            }
           });
         }
       }
@@ -204,11 +220,31 @@ export default function ModuleCardWrapper({
       if (!dragStartRef.current) return;
       if (dragStartRef.current.pointerId !== e.pointerId) return;
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      // 미처리 RAF 취소 후 최종 위치 즉시 반영
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+        const move = pendingMoveRef.current;
+        const start = dragStartRef.current;
+        if (move && start) {
+          if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
+            onMultiDragMove(move.canvasDx, move.canvasDy);
+          } else {
+            updateModule(boardId, module.id, {
+              position: {
+                x: start.moduleX + move.canvasDx,
+                y: start.moduleY + move.canvasDy,
+              },
+            });
+          }
+        }
+        pendingMoveRef.current = null;
+      }
       dragStartRef.current = null;
       multiDragStartedRef.current = false;
       setIsDragging(false);
     },
-    []
+    [boardId, module.id, updateModule, isMultiSelected, onMultiDragMove]
   );
 
   function handleDataChange(data: Module["data"]) {
@@ -221,6 +257,10 @@ export default function ModuleCardWrapper({
 
   function handleToggleExpand() {
     updateModule(boardId, module.id, { isExpanded: !module.isExpanded });
+  }
+
+  function handleToggleMinimize() {
+    updateModule(boardId, module.id, { isMinimized: !module.isMinimized });
   }
 
   function handleDelete() {
@@ -278,9 +318,13 @@ export default function ModuleCardWrapper({
       return;
     }
 
-    // 더블클릭 → 확장 토글 (connecting 모드와 무관하게 최우선)
+    // 더블클릭 → 최소화 복원 또는 확장 토글
     if (e.detail === 2) {
-      handleToggleExpand();
+      if (module.isMinimized) {
+        handleToggleMinimize();
+      } else {
+        handleToggleExpand();
+      }
       return;
     }
 
@@ -348,6 +392,7 @@ export default function ModuleCardWrapper({
         return (
           <FileModule
             data={module.data as FileData}
+            moduleId={module.id}
             isExpanded={module.isExpanded}
             onChange={(d) => handleDataChange(d)}
           />
@@ -464,6 +509,7 @@ export default function ModuleCardWrapper({
             setIsContextMenuOpen(true);
           }}
           onToggleExpand={handleToggleExpand}
+          onToggleMinimize={handleToggleMinimize}
           onTitleChange={handleTitleChange}
           onFullView={() => setIsFullViewOpen(true)}
         >
@@ -528,57 +574,61 @@ export default function ModuleCardWrapper({
           />
 
           {isFullViewOpen && (
-            <div
-              className="fixed inset-0 flex items-center justify-center px-4"
-              style={{ zIndex: 200, background: "rgba(0,0,0,0.55)" }}
-              onClick={() => setIsFullViewOpen(false)}
-            >
-              <div
-                className="rounded-2xl flex flex-col"
-                style={{
-                  background: "var(--surface-elevated)",
-                  border: "1px solid var(--border)",
-                  boxShadow: "var(--shadow-lg)",
-                  width: "min(560px, 100%)",
-                  maxHeight: "80vh",
-                  overflow: "hidden",
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* 전체 보기 헤더 */}
+            module.type === "image"
+              ? /* 이미지 전용: 전체화면 뷰어 */
+                <ImageFullView
+                  module={module}
+                  onClose={() => setIsFullViewOpen(false)}
+                />
+              : /* 일반 모달 */
                 <div
-                  className="flex items-center justify-between px-5 py-4"
-                  style={{ borderBottom: "1px solid var(--border)", flexShrink: 0 }}
+                  className="fixed inset-0 flex items-center justify-center px-4"
+                  style={{ zIndex: 200, background: "rgba(0,0,0,0.55)" }}
+                  onClick={() => setIsFullViewOpen(false)}
                 >
-                  <span
-                    className="font-semibold text-base"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    {(module.data as { title?: string }).title || "전체 보기"}
-                  </span>
-                  <button
-                    onClick={() => setIsFullViewOpen(false)}
+                  <div
+                    className="rounded-2xl flex flex-col"
                     style={{
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      fontSize: 20,
-                      color: "var(--text-muted)",
-                      lineHeight: 1,
-                      padding: "4px 8px",
+                      background: "var(--surface-elevated)",
+                      border: "1px solid var(--border)",
+                      boxShadow: "var(--shadow-lg)",
+                      width: "min(560px, 100%)",
+                      maxHeight: "80vh",
+                      overflow: "hidden",
                     }}
-                    aria-label="닫기"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    ✕
-                  </button>
+                    <div
+                      className="flex items-center justify-between px-5 py-4"
+                      style={{ borderBottom: "1px solid var(--border)", flexShrink: 0 }}
+                    >
+                      <span
+                        className="font-semibold text-base"
+                        style={{ color: "var(--text-primary)" }}
+                      >
+                        {(module.data as { title?: string }).title || "전체 보기"}
+                      </span>
+                      <button
+                        onClick={() => setIsFullViewOpen(false)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 20,
+                          color: "var(--text-muted)",
+                          lineHeight: 1,
+                          padding: "4px 8px",
+                        }}
+                        aria-label="닫기"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
+                      <FullViewContent module={module} />
+                    </div>
+                  </div>
                 </div>
-
-                {/* 전체 보기 내용 */}
-                <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
-                  <FullViewContent module={module} />
-                </div>
-              </div>
-            </div>
           )}
         </>,
         document.body
@@ -591,6 +641,110 @@ export default function ModuleCardWrapper({
         }
       `}</style>
     </>
+  );
+}
+
+// ── 이미지 전체화면 뷰어 ───────────────────────────────────────────
+function ImageFullView({ module, onClose }: { module: Module; onClose: () => void }) {
+  const d = module.data as ImageData;
+  const [zoomed, setZoomed] = useState(false);
+
+  return (
+    <div
+      className="fixed inset-0 flex flex-col"
+      style={{ zIndex: 200, background: "rgba(0,0,0,0.92)" }}
+      onClick={onClose}
+    >
+      {/* 상단 바 */}
+      <div
+        className="flex items-center justify-between px-4 flex-shrink-0"
+        style={{ height: 52 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span
+          className="font-medium text-sm truncate max-w-[70%]"
+          style={{ color: "rgba(255,255,255,0.85)" }}
+        >
+          {d.title || d.caption || "이미지"}
+        </span>
+        <div className="flex items-center gap-2">
+          {d.src && (
+            <button
+              onClick={() => setZoomed((v) => !v)}
+              style={{
+                background: "rgba(255,255,255,0.12)",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                color: "#fff",
+                fontSize: 12,
+                padding: "5px 10px",
+              }}
+              title={zoomed ? "축소" : "확대"}
+            >
+              {zoomed ? "축소 ▼" : "확대 ▲"}
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              background: "rgba(255,255,255,0.12)",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              color: "#fff",
+              fontSize: 18,
+              width: 36,
+              height: 36,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            aria-label="닫기"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {/* 이미지 영역 */}
+      <div
+        className="flex-1 overflow-auto flex items-center justify-center"
+        style={{ touchAction: "pinch-zoom" }}
+        onClick={(e) => { e.stopPropagation(); setZoomed((v) => !v); }}
+      >
+        {d.src ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={d.src}
+            alt={d.caption || d.title}
+            style={{
+              maxWidth: zoomed ? "none" : "100%",
+              maxHeight: zoomed ? "none" : "100%",
+              width: zoomed ? "auto" : undefined,
+              objectFit: "contain",
+              transition: "max-width 200ms, max-height 200ms",
+              cursor: zoomed ? "zoom-out" : "zoom-in",
+              userSelect: "none",
+            }}
+            draggable={false}
+          />
+        ) : (
+          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>이미지 없음</span>
+        )}
+      </div>
+
+      {/* 하단 캡션 */}
+      {d.caption && (
+        <div
+          className="flex-shrink-0 text-center py-3 px-4"
+          style={{ color: "rgba(255,255,255,0.6)", fontSize: 13 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {d.caption}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -728,6 +882,10 @@ function FullViewContent({ module }: { module: Module }) {
           {d.src && (
             <button
               onClick={() => {
+                if (d.src.startsWith("http")) {
+                  window.open(d.src, "_blank", "noopener,noreferrer");
+                  return;
+                }
                 try {
                   const parts = d.src.split(",");
                   const byteString = atob(parts[1]);

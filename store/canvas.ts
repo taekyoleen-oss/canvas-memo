@@ -35,6 +35,7 @@ interface CanvasStore {
   // 커넥션 CRUD
   addConnection(boardId: string, connection: Omit<Connection, "id">): void;
   removeConnection(boardId: string, connectionId: string): void;
+  updateConnection(boardId: string, connectionId: string, updates: Partial<Pick<Connection, "label" | "style" | "color">>): void;
 
   // 그룹 CRUD
   addGroup(boardId: string, group: Omit<Group, "id" | "createdAt" | "updatedAt">): void;
@@ -53,6 +54,15 @@ interface CanvasStore {
   // 그룹 포커스 (사이드바 → 캔버스 네비게이션)
   focusGroupId: string | null;
   setFocusGroup(groupId: string | null): void;
+
+  // 모듈 포커스 (검색 → 캔버스 네비게이션)
+  focusModuleId: string | null;
+  setFocusModule(moduleId: string | null): void;
+
+  // 실행취소 히스토리
+  _history: Board[][];
+  pushHistory(): void;
+  undo(): void;
 
   // 뷰포트
   updateViewport(boardId: string, viewport: Board["viewport"]): void;
@@ -104,6 +114,7 @@ async function pushBoardToSupabase(
         z_index: m.zIndex,
         color: m.color,
         is_expanded: m.isExpanded,
+        is_minimized: m.isMinimized ?? false,
         data: m.data,
         created_at: m.createdAt,
         updated_at: m.updatedAt,
@@ -164,11 +175,15 @@ async function pushBoardToSupabase(
 
 // ── 스토어 ───────────────────────────────────────────────────────────────
 
+const HISTORY_LIMIT = 30;
+
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
   boards: [],
   activeBoardId: null,
   focusGroupId: null,
+  focusModuleId: null,
   pendingGroupInvite: null,
+  _history: [],
 
   hydrate() {
     const appData = loadAppData();
@@ -258,6 +273,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           zIndex: m.z_index,
           color: m.color as Module["color"],
           isExpanded: m.is_expanded,
+          isMinimized: m.is_minimized ?? false,
           data: m.data as Module["data"],
           createdAt: m.created_at,
           updatedAt: m.updated_at,
@@ -323,6 +339,28 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     set({ focusGroupId: groupId });
   },
 
+  setFocusModule(moduleId) {
+    set({ focusModuleId: moduleId });
+  },
+
+  pushHistory() {
+    const { boards, _history } = get();
+    const snapshot = JSON.parse(JSON.stringify(boards)) as Board[];
+    const next = [..._history, snapshot];
+    if (next.length > HISTORY_LIMIT) next.shift();
+    set({ _history: next });
+  },
+
+  undo() {
+    const { _history } = get();
+    if (_history.length === 0) return;
+    const prev = _history[_history.length - 1];
+    const next = _history.slice(0, -1);
+    set({ boards: prev, _history: next });
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
   addBoard(boardInput) {
     const now = getTimestamp();
     const newBoard: Board = {
@@ -382,6 +420,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   // ─── 모듈 CRUD ─────────────────────────────────────────────────────────
 
   addModule(boardId, moduleInput) {
+    get().pushHistory();
     const now = getTimestamp();
     const newModule: Module = {
       ...moduleInput,
@@ -407,6 +446,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   removeModule(boardId, moduleId) {
+    get().pushHistory();
     set((state) => ({
       boards: state.boards.map((b) =>
         b.id === boardId
@@ -495,6 +535,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   // ─── 커넥션 CRUD ───────────────────────────────────────────────────────
 
   addConnection(boardId, connectionInput) {
+    get().pushHistory();
     const newConnection: Connection = {
       ...connectionInput,
       id: uuidv4(),
@@ -544,6 +585,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   removeConnection(boardId, connectionId) {
+    get().pushHistory();
     set((state) => ({
       boards: state.boards.map((b) =>
         b.id === boardId
@@ -558,6 +600,24 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave?.();
     createClient().from("connections").delete().eq("id", connectionId).then(() => {});
+  },
+
+  updateConnection(boardId, connectionId, updates) {
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === boardId
+          ? {
+              ...b,
+              connections: b.connections.map((c) =>
+                c.id === connectionId ? { ...c, ...updates } : c
+              ),
+              updatedAt: getTimestamp(),
+            }
+          : b
+      ),
+    }));
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   // ─── 그룹 CRUD ─────────────────────────────────────────────────────────

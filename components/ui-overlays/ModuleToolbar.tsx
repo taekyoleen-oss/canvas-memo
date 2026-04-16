@@ -4,6 +4,7 @@ import type { ModuleType } from "@/types";
 
 interface ModuleToolbarProps {
   onAdd: (type: ModuleType) => void;
+  onSearch: () => void;
 }
 
 const MODULE_OPTIONS: { type: ModuleType; icon: string; label: string }[] = [
@@ -14,7 +15,7 @@ const MODULE_OPTIONS: { type: ModuleType; icon: string; label: string }[] = [
   { type: "file",     icon: "📎", label: "파일" },
 ];
 
-export default function ModuleToolbar({ onAdd }: ModuleToolbarProps) {
+export default function ModuleToolbar({ onAdd, onSearch }: ModuleToolbarProps) {
   return (
     <div
       className="flex items-center gap-2 px-4"
@@ -52,6 +53,37 @@ export default function ModuleToolbar({ onAdd }: ModuleToolbarProps) {
           {option.label}
         </button>
       ))}
+
+      {/* 구분선 */}
+      <div
+        style={{
+          width: 1,
+          height: 24,
+          background: "var(--border)",
+          marginLeft: "auto",
+          flexShrink: 0,
+        }}
+      />
+
+      {/* 검색 버튼 */}
+      <button
+        onClick={onSearch}
+        className="flex items-center gap-1.5 rounded-lg px-3"
+        style={{
+          height: 34,
+          background: "transparent",
+          border: "1px solid var(--border)",
+          cursor: "pointer",
+          fontSize: 13,
+          color: "var(--text-secondary)",
+          whiteSpace: "nowrap",
+          flexShrink: 0,
+        }}
+        title="모듈 검색 (Ctrl+K)"
+      >
+        <span style={{ fontSize: 15 }}>🔍</span>
+        <span className="hidden sm:inline">검색</span>
+      </button>
     </div>
   );
 }

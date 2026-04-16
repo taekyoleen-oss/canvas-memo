@@ -1,10 +1,13 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { FileData } from "@/types";
+import { useAuthStore } from "@/store/auth";
+import { uploadFileToStorage } from "@/lib/supabase/fileUpload";
 
 interface FileModuleProps {
   data: FileData;
+  moduleId: string;
   isExpanded: boolean;
   onChange: (data: FileData) => void;
 }
@@ -31,6 +34,13 @@ function getFileIcon(mimeType: string): string {
 }
 
 function openFile(src: string, fileType: string) {
+  if (!src) return;
+  // Supabase Storage URL or any http URL → 직접 열기
+  if (src.startsWith("http")) {
+    window.open(src, "_blank", "noopener,noreferrer");
+    return;
+  }
+  // base64 데이터 URL → Blob URL 생성
   try {
     const parts = src.split(",");
     const byteString = atob(parts[1]);
@@ -47,16 +57,38 @@ function openFile(src: string, fileType: string) {
   }
 }
 
-export default function FileModule({ data, isExpanded, onChange }: FileModuleProps) {
+export default function FileModule({ data, moduleId, isExpanded, onChange }: FileModuleProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const { user } = useAuthStore();
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const src = ev.target?.result as string;
+    setUploading(true);
+    try {
+      let src = "";
+
+      // 로그인 상태이면 Supabase Storage 시도
+      if (user?.id) {
+        const url = await uploadFileToStorage(user.id, moduleId, file);
+        if (url) {
+          src = url;
+        }
+      }
+
+      // Storage 업로드 실패 또는 미로그인 → base64 폴백
+      if (!src) {
+        src = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target?.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
       onChange({
         ...data,
         fileName: file.name,
@@ -64,9 +96,9 @@ export default function FileModule({ data, isExpanded, onChange }: FileModulePro
         fileSize: file.size,
         src,
       });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
+    } finally {
+      setUploading(false);
+    }
   }
 
   function handleOpen(e: React.MouseEvent) {
@@ -160,17 +192,19 @@ export default function FileModule({ data, isExpanded, onChange }: FileModulePro
             fileInputRef.current?.click();
           }}
           onPointerDown={(e) => e.stopPropagation()}
+          disabled={uploading}
           className="rounded-lg text-sm font-medium"
           style={{
             flex: 1,
             height: 36,
             background: "var(--surface-elevated)",
             border: "1px solid var(--border)",
-            cursor: "pointer",
+            cursor: uploading ? "wait" : "pointer",
             color: "var(--text-primary)",
+            opacity: uploading ? 0.6 : 1,
           }}
         >
-          {data.fileName ? "파일 변경" : "📂 파일 업로드"}
+          {uploading ? "업로드 중…" : data.fileName ? "파일 변경" : "📂 파일 업로드"}
         </button>
 
         {data.src && (

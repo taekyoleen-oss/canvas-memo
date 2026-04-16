@@ -27,6 +27,7 @@ export default function Sidebar({
   const [isExpanded, setIsExpanded] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editIcon, setEditIcon] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
@@ -38,11 +39,15 @@ export default function Sidebar({
     e.stopPropagation();
     setEditingId(board.id);
     setEditValue(board.name);
+    setEditIcon(board.icon);
   }
 
   function commitEdit() {
     if (editingId && editValue.trim()) {
-      updateBoard(editingId, { name: editValue.trim() });
+      updateBoard(editingId, {
+        name: editValue.trim(),
+        icon: editIcon.trim() || "📋",
+      });
     }
     setEditingId(null);
   }
@@ -152,28 +157,57 @@ export default function Sidebar({
                 {isExpanded && (
                   <>
                     {editingId === board.id ? (
-                      <input
-                        ref={editInputRef}
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onBlur={commitEdit}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") commitEdit();
-                          if (e.key === "Escape") setEditingId(null);
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-1 rounded px-1"
-                        style={{
-                          fontSize: 14,
-                          background: "var(--surface-hover)",
-                          border: "1px solid var(--primary)",
-                          color: "var(--text-primary)",
-                          outline: "none",
-                          height: 28,
-                          minWidth: 0,
-                        }}
-                      />
+                      <div className="flex items-center gap-1 flex-1 min-w-0">
+                        {/* 아이콘 편집 */}
+                        <input
+                          type="text"
+                          value={editIcon}
+                          onChange={(e) => setEditIcon(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") setEditingId(null);
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          maxLength={2}
+                          style={{
+                            width: 32,
+                            height: 28,
+                            fontSize: 16,
+                            textAlign: "center",
+                            background: "var(--surface-hover)",
+                            border: "1px solid var(--primary)",
+                            borderRadius: 6,
+                            color: "var(--text-primary)",
+                            outline: "none",
+                            flexShrink: 0,
+                          }}
+                        />
+                        {/* 이름 편집 */}
+                        <input
+                          ref={editInputRef}
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") setEditingId(null);
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 rounded px-1"
+                          style={{
+                            fontSize: 14,
+                            background: "var(--surface-hover)",
+                            border: "1px solid var(--primary)",
+                            color: "var(--text-primary)",
+                            outline: "none",
+                            height: 28,
+                            minWidth: 0,
+                          }}
+                        />
+                      </div>
                     ) : (
                       <span
                         className="flex-1 truncate"

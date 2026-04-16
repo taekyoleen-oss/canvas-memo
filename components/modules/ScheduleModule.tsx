@@ -52,11 +52,13 @@ export default function ScheduleModule({
         <label
           key={item.id}
           className="flex items-center gap-2 cursor-pointer py-0.5"
+          onPointerDown={(e) => e.stopPropagation()}
         >
           <input
             type="checkbox"
             checked={item.done}
             onChange={() => toggleItem(item.id)}
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: 16,
               height: 16,

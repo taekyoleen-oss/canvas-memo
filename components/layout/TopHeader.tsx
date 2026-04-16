@@ -6,9 +6,10 @@ import { useAuthStore } from "@/store/auth";
 interface TopHeaderProps {
   boardName: string;
   onAddModule: () => void;
+  onMenuClick: () => void;
 }
 
-export default function TopHeader({ boardName, onAddModule }: TopHeaderProps) {
+export default function TopHeader({ boardName, onAddModule, onMenuClick }: TopHeaderProps) {
   const { user, signOut } = useAuthStore();
   return (
     <header
@@ -23,6 +24,7 @@ export default function TopHeader({ boardName, onAddModule }: TopHeaderProps) {
       {/* 좌측 */}
       <div className="flex items-center gap-2">
         <button
+          onClick={onMenuClick}
           className="flex items-center justify-center rounded-lg"
           style={{
             width: 44,
