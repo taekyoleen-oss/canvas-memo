@@ -8,10 +8,11 @@ interface ModuleFABProps {
 }
 
 const MODULE_OPTIONS: { type: ModuleType; icon: string; label: string }[] = [
-  { type: "memo", icon: "📝", label: "메모" },
+  { type: "memo",     icon: "📝", label: "메모" },
   { type: "schedule", icon: "✅", label: "일정" },
-  { type: "image", icon: "🖼", label: "이미지" },
-  { type: "link", icon: "🔗", label: "링크" },
+  { type: "image",    icon: "🖼", label: "이미지" },
+  { type: "link",     icon: "🔗", label: "링크" },
+  { type: "file",     icon: "📎", label: "파일" },
 ];
 
 export default function ModuleFAB({ onAdd }: ModuleFABProps) {

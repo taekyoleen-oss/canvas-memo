@@ -33,12 +33,32 @@ export default function LinkModule({
     return (
       <div className="px-3 py-2 flex flex-col gap-1">
         {data.url && (
-          <p
-            className="text-xs truncate"
-            style={{ color: "var(--text-muted)" }}
-          >
-            {data.url}
-          </p>
+          <div className="flex items-center gap-1">
+            <p
+              className="text-xs truncate flex-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {data.url}
+            </p>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(data.url, "_blank", "noopener,noreferrer");
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="rounded px-1.5 text-xs font-medium flex-shrink-0"
+              style={{
+                height: 22,
+                background: "var(--primary)",
+                color: "var(--primary-fg)",
+                border: "none",
+                cursor: "pointer",
+              }}
+              title="웹페이지 열기"
+            >
+              열기 ↗
+            </button>
+          </div>
         )}
         {data.thumbnail && (
           <div
@@ -124,6 +144,26 @@ export default function LinkModule({
         >
           {data.description}
         </p>
+      )}
+
+      {data.url && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            window.open(data.url, "_blank", "noopener,noreferrer");
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="rounded-lg text-sm font-medium"
+          style={{
+            height: 36,
+            background: "var(--primary)",
+            color: "var(--primary-fg)",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          웹페이지 열기 ↗
+        </button>
       )}
     </div>
   );

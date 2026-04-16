@@ -11,6 +11,7 @@ const MODULE_OPTIONS: { type: ModuleType; icon: string; label: string }[] = [
   { type: "schedule", icon: "✅", label: "일정" },
   { type: "image",    icon: "🖼", label: "이미지" },
   { type: "link",     icon: "🔗", label: "링크" },
+  { type: "file",     icon: "📎", label: "파일" },
 ];
 
 export default function ModuleToolbar({ onAdd }: ModuleToolbarProps) {

@@ -6,7 +6,9 @@ interface ModuleContextMenuProps {
   onClose: () => void;
   onConnect: () => void;
   onColorChange: () => void;
-  onDuplicate: () => void;
+  onCopy: () => void;
+  onPaste: () => void;
+  hasPasteTarget: boolean;
   onDelete: () => void;
 }
 
@@ -15,10 +17,11 @@ interface MenuItem {
   label: string;
   action: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }
 
 const MENU_WIDTH = 180;
-const MENU_HEIGHT = 44 * 4; // 4 items × 44px
+const MENU_HEIGHT = 44 * 5; // 5 items × 44px
 
 export default function ModuleContextMenu({
   isOpen,
@@ -26,7 +29,9 @@ export default function ModuleContextMenu({
   onClose,
   onConnect,
   onColorChange,
-  onDuplicate,
+  onCopy,
+  onPaste,
+  hasPasteTarget,
   onDelete,
 }: ModuleContextMenuProps) {
   if (!isOpen) return null;
@@ -34,7 +39,8 @@ export default function ModuleContextMenu({
   const items: MenuItem[] = [
     { icon: "🔗", label: "연결하기", action: onConnect },
     { icon: "🎨", label: "색상 변경", action: onColorChange },
-    { icon: "📋", label: "복사",     action: onDuplicate },
+    { icon: "📋", label: "복사",     action: onCopy },
+    { icon: "📌", label: "붙여넣기", action: onPaste, disabled: !hasPasteTarget },
     { icon: "🗑",  label: "삭제",    action: onDelete, danger: true },
   ];
 
@@ -95,16 +101,18 @@ export default function ModuleContextMenu({
             {items.map((item) => (
               <button
                 key={item.label}
-                onClick={() => handleItemClick(item.action)}
+                onClick={() => !item.disabled && handleItemClick(item.action)}
+                disabled={item.disabled}
                 className="flex items-center gap-3 px-5"
                 style={{
                   height: 52,
                   background: "transparent",
                   border: "none",
-                  cursor: "pointer",
-                  color: item.danger ? "#EF4444" : "var(--text-primary)",
+                  cursor: item.disabled ? "default" : "pointer",
+                  color: item.danger ? "#EF4444" : item.disabled ? "var(--text-muted)" : "var(--text-primary)",
                   fontSize: 15,
                   textAlign: "left",
+                  opacity: item.disabled ? 0.45 : 1,
                 }}
               >
                 <span style={{ fontSize: 20, width: 28, textAlign: "center" }}>
@@ -141,15 +149,17 @@ export default function ModuleContextMenu({
           {items.map((item) => (
             <button
               key={item.label}
-              onClick={() => handleItemClick(item.action)}
+              onClick={() => !item.disabled && handleItemClick(item.action)}
+              disabled={item.disabled}
               className="flex items-center gap-3 px-4 w-full"
               style={{
                 height: 44,
                 background: "transparent",
                 border: "none",
                 borderBottom: "1px solid var(--border)",
-                cursor: "pointer",
-                color: item.danger ? "#EF4444" : "var(--text-primary)",
+                cursor: item.disabled ? "default" : "pointer",
+                color: item.danger ? "#EF4444" : item.disabled ? "var(--text-muted)" : "var(--text-primary)",
+                opacity: item.disabled ? 0.45 : 1,
                 fontSize: 14,
                 textAlign: "left",
               }}

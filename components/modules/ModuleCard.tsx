@@ -10,6 +10,7 @@ interface ModuleCardProps {
   onContextMenu?: (rect: DOMRect) => void;
   onToggleExpand?: () => void;
   onTitleChange?: (title: string) => void;
+  onFullView?: () => void;
 }
 
 const COLOR_MAP: Record<ModuleColor, string> = {
@@ -28,6 +29,7 @@ const MODULE_TYPE_ICON: Record<Module["type"], string> = {
   schedule: "✅",
   image: "🖼",
   link: "🔗",
+  file: "📎",
 };
 
 export default function ModuleCard({
@@ -38,6 +40,7 @@ export default function ModuleCard({
   onContextMenu,
   onToggleExpand,
   onTitleChange,
+  onFullView,
 }: ModuleCardProps) {
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
 
@@ -130,36 +133,72 @@ export default function ModuleCard({
       {/* 내용 */}
       <div className="flex flex-col">{children}</div>
 
-      {/* 펼치기/접기 탭 */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleExpand?.();
-        }}
-        className="flex items-center justify-center gap-1 w-full"
+      {/* 펼치기/접기 + 전체 보기 탭 */}
+      <div
+        className="flex"
         style={{
-          height: 28,
-          background: "transparent",
-          border: "none",
           borderTop: "1px solid var(--border)",
-          cursor: "pointer",
-          color: "var(--text-muted)",
-          fontSize: 11,
           flexShrink: 0,
-          transition: "background 0.12s",
         }}
-        onMouseEnter={(e) =>
-          ((e.currentTarget as HTMLElement).style.background =
-            "var(--surface-hover)")
-        }
-        onMouseLeave={(e) =>
-          ((e.currentTarget as HTMLElement).style.background = "transparent")
-        }
-        aria-label={module.isExpanded ? "접기" : "더보기"}
       >
-        <span style={{ transition: "transform 0.2s", display: "inline-block", transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
-        <span>{module.isExpanded ? "접기" : "더보기"}</span>
-      </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.();
+          }}
+          className="flex items-center justify-center gap-1 flex-1"
+          style={{
+            height: 28,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--text-muted)",
+            fontSize: 11,
+            transition: "background 0.12s",
+          }}
+          onMouseEnter={(e) =>
+            ((e.currentTarget as HTMLElement).style.background =
+              "var(--surface-hover)")
+          }
+          onMouseLeave={(e) =>
+            ((e.currentTarget as HTMLElement).style.background = "transparent")
+          }
+          aria-label={module.isExpanded ? "접기" : "더보기"}
+        >
+          <span style={{ transition: "transform 0.2s", display: "inline-block", transform: module.isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>▾</span>
+          <span>{module.isExpanded ? "접기" : "더보기"}</span>
+        </button>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onFullView?.();
+          }}
+          className="flex items-center justify-center gap-1"
+          style={{
+            height: 28,
+            paddingInline: 10,
+            background: "transparent",
+            border: "none",
+            borderLeft: "1px solid var(--border)",
+            cursor: "pointer",
+            color: "var(--text-muted)",
+            fontSize: 11,
+            transition: "background 0.12s",
+            whiteSpace: "nowrap",
+          }}
+          onMouseEnter={(e) =>
+            ((e.currentTarget as HTMLElement).style.background =
+              "var(--surface-hover)")
+          }
+          onMouseLeave={(e) =>
+            ((e.currentTarget as HTMLElement).style.background = "transparent")
+          }
+          aria-label="전체 보기"
+        >
+          ⛶ 전체 보기
+        </button>
+      </div>
     </div>
   );
 }

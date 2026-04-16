@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
-import type { Module, MemoData, ScheduleData, ImageData, LinkData } from "@/types";
+import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData } from "@/types";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
@@ -12,6 +12,7 @@ import MemoModule from "./MemoModule";
 import ScheduleModule from "./ScheduleModule";
 import ImageModule from "./ImageModule";
 import LinkModule from "./LinkModule";
+import FileModule from "./FileModule";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
 import DeleteConfirmDialog from "@/components/ui-overlays/DeleteConfirmDialog";
@@ -29,6 +30,9 @@ interface ModuleCardWrapperProps {
   onMultiDragMove?: (dx: number, dy: number) => void;
   onShiftSelect?: (id: string) => void;
 }
+
+// 모듈 클립보드 (복사/붙여넣기용 - 페이지 세션 동안 유지)
+let _moduleClipboard: { type: Module["type"]; data: Module["data"] } | null = null;
 
 /** 두 모듈의 중심 위치를 기반으로 최적 toAnchor 계산 */
 function getBestToAnchor(fromModule: Module, toModule: Module): AnchorSide {
@@ -73,6 +77,8 @@ export default function ModuleCardWrapper({
   const [isColorPaletteOpen, setIsColorPaletteOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [showAnchors, setShowAnchors] = useState(false);
+  const [isFullViewOpen, setIsFullViewOpen] = useState(false);
+  const [, forceUpdate] = useState(0); // 클립보드 상태 변경 시 리렌더링용
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const lastSyncedHeightRef = useRef<number>(0);
@@ -224,8 +230,27 @@ export default function ModuleCardWrapper({
     onDeselect();
   }
 
-  function handleDuplicate() {
-    duplicateModule(boardId, module.id);
+  function handleCopy() {
+    _moduleClipboard = {
+      type: module.type,
+      data: JSON.parse(JSON.stringify(module.data)),
+    };
+    forceUpdate((n) => n + 1);
+    setIsContextMenuOpen(false);
+  }
+
+  function handlePaste() {
+    if (!_moduleClipboard) return;
+    const addModule = useCanvasStore.getState().addModule;
+    addModule(boardId, {
+      type: _moduleClipboard.type,
+      position: { x: module.position.x + 30, y: module.position.y + 30 },
+      size: { width: 200, height: 100 },
+      zIndex: module.zIndex + 1,
+      color: module.color,
+      isExpanded: false,
+      data: JSON.parse(JSON.stringify(_moduleClipboard.data)),
+    });
     setIsContextMenuOpen(false);
   }
 
@@ -315,6 +340,14 @@ export default function ModuleCardWrapper({
         return (
           <LinkModule
             data={module.data as LinkData}
+            isExpanded={module.isExpanded}
+            onChange={(d) => handleDataChange(d)}
+          />
+        );
+      case "file":
+        return (
+          <FileModule
+            data={module.data as FileData}
             isExpanded={module.isExpanded}
             onChange={(d) => handleDataChange(d)}
           />
@@ -432,6 +465,7 @@ export default function ModuleCardWrapper({
           }}
           onToggleExpand={handleToggleExpand}
           onTitleChange={handleTitleChange}
+          onFullView={() => setIsFullViewOpen(true)}
         >
           {renderModuleContent()}
         </ModuleCard>
@@ -449,7 +483,9 @@ export default function ModuleCardWrapper({
               setIsContextMenuOpen(false);
               setIsColorPaletteOpen(true);
             }}
-            onDuplicate={handleDuplicate}
+            onCopy={handleCopy}
+            onPaste={handlePaste}
+            hasPasteTarget={_moduleClipboard !== null}
             onDelete={() => {
               setIsContextMenuOpen(false);
               setIsDeleteDialogOpen(true);
@@ -490,6 +526,60 @@ export default function ModuleCardWrapper({
             onClose={() => setIsDeleteDialogOpen(false)}
             onConfirm={handleDelete}
           />
+
+          {isFullViewOpen && (
+            <div
+              className="fixed inset-0 flex items-center justify-center px-4"
+              style={{ zIndex: 200, background: "rgba(0,0,0,0.55)" }}
+              onClick={() => setIsFullViewOpen(false)}
+            >
+              <div
+                className="rounded-2xl flex flex-col"
+                style={{
+                  background: "var(--surface-elevated)",
+                  border: "1px solid var(--border)",
+                  boxShadow: "var(--shadow-lg)",
+                  width: "min(560px, 100%)",
+                  maxHeight: "80vh",
+                  overflow: "hidden",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* 전체 보기 헤더 */}
+                <div
+                  className="flex items-center justify-between px-5 py-4"
+                  style={{ borderBottom: "1px solid var(--border)", flexShrink: 0 }}
+                >
+                  <span
+                    className="font-semibold text-base"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    {(module.data as { title?: string }).title || "전체 보기"}
+                  </span>
+                  <button
+                    onClick={() => setIsFullViewOpen(false)}
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 20,
+                      color: "var(--text-muted)",
+                      lineHeight: 1,
+                      padding: "4px 8px",
+                    }}
+                    aria-label="닫기"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* 전체 보기 내용 */}
+                <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
+                  <FullViewContent module={module} />
+                </div>
+              </div>
+            </div>
+          )}
         </>,
         document.body
       )}
@@ -502,4 +592,170 @@ export default function ModuleCardWrapper({
       `}</style>
     </>
   );
+}
+
+// ── 전체 보기 내용 컴포넌트 ──────────────────────────────────────────
+function FullViewContent({ module }: { module: Module }) {
+  switch (module.type) {
+    case "memo": {
+      const d = module.data as MemoData;
+      return (
+        <p
+          className="text-sm"
+          style={{
+            color: "var(--text-primary)",
+            whiteSpace: "pre-wrap",
+            lineHeight: 1.7,
+          }}
+        >
+          {d.content || "내용 없음"}
+        </p>
+      );
+    }
+    case "schedule": {
+      const d = module.data as ScheduleData;
+      return (
+        <div className="flex flex-col gap-2">
+          {d.items.length === 0 && (
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              일정 항목 없음
+            </p>
+          )}
+          {d.items.map((item) => (
+            <div key={item.id} className="flex items-start gap-2">
+              <span style={{ fontSize: 16 }}>{item.done ? "✅" : "⬜"}</span>
+              <span
+                className="text-sm"
+                style={{
+                  color: item.done ? "var(--text-muted)" : "var(--text-primary)",
+                  textDecoration: item.done ? "line-through" : "none",
+                  lineHeight: 1.5,
+                }}
+              >
+                {item.text}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    case "image": {
+      const d = module.data as ImageData;
+      return (
+        <div className="flex flex-col gap-3">
+          {d.src ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={d.src}
+              alt={d.caption || d.title}
+              className="w-full rounded-lg object-contain"
+              style={{ maxHeight: 400 }}
+            />
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              이미지 없음
+            </p>
+          )}
+          {d.caption && (
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              {d.caption}
+            </p>
+          )}
+        </div>
+      );
+    }
+    case "link": {
+      const d = module.data as LinkData;
+      return (
+        <div className="flex flex-col gap-3">
+          {d.thumbnail && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={d.thumbnail}
+              alt={d.title}
+              className="w-full rounded-lg object-cover"
+              style={{ height: 180 }}
+            />
+          )}
+          {d.title && (
+            <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>
+              {d.title}
+            </p>
+          )}
+          {d.description && (
+            <p className="text-sm" style={{ color: "var(--text-secondary)", lineHeight: 1.6 }}>
+              {d.description}
+            </p>
+          )}
+          {d.url && (
+            <a
+              href={d.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs truncate"
+              style={{ color: "var(--primary)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {d.url} ↗
+            </a>
+          )}
+        </div>
+      );
+    }
+    case "file": {
+      const d = module.data as FileData;
+      return (
+        <div className="flex flex-col gap-3">
+          <div
+            className="flex items-center gap-3 rounded-lg px-4 py-3"
+            style={{ background: "var(--surface-hover)", border: "1px solid var(--border)" }}
+          >
+            <span style={{ fontSize: 32 }}>📎</span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+                {d.fileName || "파일 없음"}
+              </span>
+              {d.fileType && (
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {d.fileType}
+                  {d.fileSize > 0
+                    ? ` · ${d.fileSize < 1024 * 1024 ? `${(d.fileSize / 1024).toFixed(1)} KB` : `${(d.fileSize / (1024 * 1024)).toFixed(1)} MB`}`
+                    : ""}
+                </span>
+              )}
+            </div>
+          </div>
+          {d.src && (
+            <button
+              onClick={() => {
+                try {
+                  const parts = d.src.split(",");
+                  const byteString = atob(parts[1]);
+                  const ab = new ArrayBuffer(byteString.length);
+                  const ia = new Uint8Array(ab);
+                  for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+                  const blob = new Blob([ab], { type: d.fileType });
+                  window.open(URL.createObjectURL(blob), "_blank");
+                } catch {
+                  console.warn("파일을 열 수 없습니다.");
+                }
+              }}
+              className="rounded-lg text-sm font-medium"
+              style={{
+                height: 40,
+                background: "var(--primary)",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--primary-fg)",
+              }}
+            >
+              파일 열기 ↗
+            </button>
+          )}
+        </div>
+      );
+    }
+    default:
+      return null;
+  }
 }

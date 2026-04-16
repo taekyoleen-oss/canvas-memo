@@ -17,7 +17,7 @@ interface AnchorPointProps {
 const ANCHOR_OFFSET: Record<AnchorSide, React.CSSProperties> = {
   top:    { top: 0,    left: "50%",  transform: "translate(-50%, -50%)" },
   right:  { top: "50%", right: 0,   transform: "translate(50%,  -50%)" },
-  bottom: { bottom: 0, left: "50%", transform: "translate(-50%, 50%)"  },
+  bottom: { bottom: 0, left: "50%", transform: "translate(-50%, 100%)" },
   left:   { top: "50%", left: 0,    transform: "translate(-50%, -50%)" },
 };
 

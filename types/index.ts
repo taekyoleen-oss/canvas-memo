@@ -20,7 +20,7 @@ export interface Board {
   viewport: { x: number; y: number; zoom: number };
 }
 
-export type ModuleType = "memo" | "schedule" | "image" | "link";
+export type ModuleType = "memo" | "schedule" | "image" | "link" | "file";
 
 export type ModuleColor =
   | "default"
@@ -42,7 +42,7 @@ export interface Module {
   isExpanded: boolean;
   createdAt: string;
   updatedAt: string;
-  data: MemoData | ScheduleData | ImageData | LinkData;
+  data: MemoData | ScheduleData | ImageData | LinkData | FileData;
 }
 
 export interface MemoData {
@@ -76,6 +76,14 @@ export interface LinkData {
   description: string;
   favicon: string;
   thumbnail: string;
+}
+
+export interface FileData {
+  title: string;
+  fileName: string;
+  fileType: string; // MIME type
+  fileSize: number;
+  src: string; // base64 data URL
 }
 
 export interface Connection {

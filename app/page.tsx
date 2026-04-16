@@ -165,7 +165,9 @@ export default function Home() {
         ? { title: "새 일정", items: [], previewCount: 3 }
         : type === "image"
         ? { title: "이미지", src: "", caption: "" }
-        : { url: "", title: "링크", description: "", favicon: "", thumbnail: "" };
+        : type === "link"
+        ? { url: "", title: "링크", description: "", favicon: "", thumbnail: "" }
+        : { title: "파일", fileName: "", fileType: "", fileSize: 0, src: "" };
     const pos = position ?? {
       x: 80 + Math.random() * 200,
       y: 80 + Math.random() * 120,
