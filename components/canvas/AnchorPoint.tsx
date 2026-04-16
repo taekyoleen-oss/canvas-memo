@@ -213,19 +213,31 @@ export default function AnchorPoint({
     >
       <div
         style={{
-          width:  hovered || isActive ? 16 : 10,
-          height: hovered || isActive ? 16 : 10,
+          width:  isActive ? 16 : hovered ? 12 : 10,
+          height: isActive ? 16 : hovered ? 12 : 10,
           borderRadius: "50%",
           background:
             type === "output"
-              ? hovered || isActive ? "var(--primary)" : "var(--border-strong)"
-              : hovered ? "var(--primary)" : "var(--surface)",
-          border: type === "input" ? "2.5px solid var(--primary)" : "none",
+              ? isActive
+                ? "var(--primary)"
+                : hovered
+                ? "var(--primary)"
+                : "var(--border-strong)"
+              : hovered
+              ? "var(--primary)"
+              : "var(--surface)",
+          border:
+            type === "input"
+              ? "2.5px solid var(--primary)"
+              : hovered && !isActive
+              ? "none"
+              : "none",
+          opacity: type === "output" && hovered && !isActive ? 0.5 : 1,
           boxShadow:
-            hovered
-              ? "0 0 0 4px var(--primary-soft), 0 0 0 7px var(--primary)"
-              : isActive
+            isActive
               ? "0 0 0 3px var(--surface), 0 0 0 6px var(--primary)"
+              : hovered
+              ? "0 0 0 3px var(--primary-soft)"
               : type === "input"
               ? "0 0 0 4px var(--primary-soft)"
               : "none",
