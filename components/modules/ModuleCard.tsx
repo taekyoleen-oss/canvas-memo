@@ -106,46 +106,14 @@ export default function ModuleCard({
             style={{ color: "var(--text-primary)", cursor: "default" }}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              onToggleMinimize?.();
+              // 최소화 상태에서 더블클릭 → 복원 (조금 펼침)
+              if (isMinimized) onToggleMinimize?.();
             }}
-            title="더블클릭: 최소화/복원"
+            title={isMinimized ? "더블클릭: 펼치기" : undefined}
           >
             {getModuleTitle(module)}
           </span>
         )}
-
-        {/* 최소화 버튼 */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleMinimize?.();
-          }}
-          className="flex items-center justify-center rounded"
-          style={{
-            width: 24,
-            height: 24,
-            background: isMinimized ? "var(--primary-soft)" : "transparent",
-            border: isMinimized ? "1px solid var(--primary)" : "none",
-            borderRadius: 6,
-            cursor: "pointer",
-            color: isMinimized ? "var(--primary)" : "var(--text-muted)",
-            fontSize: 13,
-            flexShrink: 0,
-            transition: "all 0.15s",
-          }}
-          onMouseEnter={(e) => {
-            if (!isMinimized)
-              (e.currentTarget as HTMLElement).style.background = "var(--surface-hover)";
-          }}
-          onMouseLeave={(e) => {
-            if (!isMinimized)
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-          }}
-          aria-label={isMinimized ? "복원" : "최소화"}
-          title={isMinimized ? "복원" : "최소화 (제목만 표시)"}
-        >
-          {isMinimized ? "□" : "─"}
-        </button>
 
         {/* 메뉴 버튼 */}
         <button

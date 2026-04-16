@@ -9,6 +9,8 @@ interface ModuleContextMenuProps {
   onCopy: () => void;
   onPaste: () => void;
   hasPasteTarget: boolean;
+  onToggleMinimize: () => void;
+  isMinimized: boolean;
   onDelete: () => void;
 }
 
@@ -21,7 +23,7 @@ interface MenuItem {
 }
 
 const MENU_WIDTH = 180;
-const MENU_HEIGHT = 44 * 5; // 5 items × 44px
+const MENU_HEIGHT = 44 * 6; // 6 items × 44px
 
 export default function ModuleContextMenu({
   isOpen,
@@ -32,16 +34,19 @@ export default function ModuleContextMenu({
   onCopy,
   onPaste,
   hasPasteTarget,
+  onToggleMinimize,
+  isMinimized,
   onDelete,
 }: ModuleContextMenuProps) {
   if (!isOpen) return null;
 
   const items: MenuItem[] = [
-    { icon: "🔗", label: "연결하기", action: onConnect },
-    { icon: "🎨", label: "색상 변경", action: onColorChange },
-    { icon: "📋", label: "복사",     action: onCopy },
-    { icon: "📌", label: "붙여넣기", action: onPaste, disabled: !hasPasteTarget },
-    { icon: "🗑",  label: "삭제",    action: onDelete, danger: true },
+    { icon: "🔗", label: "연결하기",                      action: onConnect },
+    { icon: "🎨", label: "색상 변경",                     action: onColorChange },
+    { icon: "📋", label: "복사",                          action: onCopy },
+    { icon: "📌", label: "붙여넣기",                      action: onPaste, disabled: !hasPasteTarget },
+    { icon: isMinimized ? "▣" : "─", label: isMinimized ? "제목만 보기 해제" : "제목만 보기", action: onToggleMinimize },
+    { icon: "🗑",  label: "삭제",                         action: onDelete, danger: true },
   ];
 
   function handleItemClick(action: () => void) {

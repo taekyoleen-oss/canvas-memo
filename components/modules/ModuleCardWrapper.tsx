@@ -532,6 +532,11 @@ export default function ModuleCardWrapper({
             onCopy={handleCopy}
             onPaste={handlePaste}
             hasPasteTarget={_moduleClipboard !== null}
+            onToggleMinimize={() => {
+              setIsContextMenuOpen(false);
+              handleToggleMinimize();
+            }}
+            isMinimized={!!module.isMinimized}
             onDelete={() => {
               setIsContextMenuOpen(false);
               setIsDeleteDialogOpen(true);
