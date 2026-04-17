@@ -28,9 +28,13 @@ export default function Sidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editIcon, setEditIcon] = useState("");
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const dragIndexRef = useRef<number | null>(null);
+
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
+  const reorderBoards = useCanvasStore((s) => s.reorderBoards);
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const { user, signOut } = useAuthStore();
@@ -120,11 +124,42 @@ export default function Sidebar({
         className="flex flex-col gap-0.5 flex-1 overflow-y-auto"
         style={{ padding: "8px" }}
       >
-        {boards.map((board) => {
+        {boards.map((board, index) => {
           const isActive = board.id === activeBoardId;
+          const isDragOver = dragOverIndex === index;
           const groups = board.groups ?? [];
           return (
-            <div key={board.id}>
+            <div
+              key={board.id}
+              draggable
+              onDragStart={(e) => {
+                dragIndexRef.current = index;
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setDragOverIndex(index);
+              }}
+              onDragLeave={() => setDragOverIndex(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = dragIndexRef.current;
+                if (from !== null && from !== index) {
+                  reorderBoards(from, index);
+                }
+                dragIndexRef.current = null;
+                setDragOverIndex(null);
+              }}
+              onDragEnd={() => {
+                dragIndexRef.current = null;
+                setDragOverIndex(null);
+              }}
+              style={{
+                borderTop: isDragOver ? "2px solid var(--primary)" : "2px solid transparent",
+                transition: "border-top 100ms",
+              }}
+            >
               {/* 보드 아이템 */}
               <div
                 className="group relative flex items-center rounded-lg"
@@ -134,13 +169,30 @@ export default function Sidebar({
                   border: isActive
                     ? "1px solid var(--primary)"
                     : "1px solid transparent",
-                  cursor: "pointer",
+                  cursor: "grab",
                   transition: "background 150ms",
                   padding: isExpanded ? "0 8px" : "0",
                   justifyContent: isExpanded ? "flex-start" : "center",
                 }}
                 onClick={() => onSelect(board.id)}
               >
+                {/* 드래그 핸들 (expanded 시) */}
+                {isExpanded && (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      marginRight: 2,
+                      flexShrink: 0,
+                      cursor: "grab",
+                      userSelect: "none",
+                    }}
+                    title="드래그하여 순서 변경"
+                  >
+                    ⠿
+                  </span>
+                )}
+
                 {/* 이모지 */}
                 <span
                   style={{

@@ -1,7 +1,5 @@
 "use client";
 
-import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
 
 interface Viewport {
   x: number;
@@ -31,10 +29,6 @@ export default function ZoomControls({
   onGroupMode,
 }: ZoomControlsProps) {
   const zoomPercent = Math.round(viewport.zoom * 100);
-  const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const isDark = resolvedTheme === "dark";
 
   const btnStyle: React.CSSProperties = {
     width: 34,
@@ -158,24 +152,6 @@ export default function ZoomControls({
           📦
         </button>
 
-        <div
-          style={{
-            width: 1,
-            height: 18,
-            background: "var(--border)",
-            marginInline: 3,
-          }}
-        />
-
-        {/* 테마 토글 — 항상 자리 확보하여 레이아웃 흔들림 방지 */}
-        <button
-          onClick={() => mounted && setTheme(isDark ? "light" : "dark")}
-          style={{ ...btnStyle, fontSize: 15, opacity: mounted ? 1 : 0, pointerEvents: mounted ? "auto" : "none" }}
-          aria-label={isDark ? "라이트 모드" : "다크 모드"}
-          title={isDark ? "라이트 모드로 전환" : "다크 모드로 전환"}
-        >
-          {isDark ? "☀️" : "🌙"}
-        </button>
       </div>
 
       <style>{`

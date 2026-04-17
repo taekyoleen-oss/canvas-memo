@@ -42,6 +42,9 @@ export function canvasToScreen(
  * 앵커 포인트의 캔버스 좌표 계산
  * module.position은 캔버스 좌표 기준
  */
+// 연결선이 모듈 외부에서 시작/끝나도록 하는 오프셋 (px)
+const ANCHOR_LINE_OFFSET = 12;
+
 export function getAnchorPosition(
   module: Module,
   anchor: AnchorSide
@@ -51,12 +54,12 @@ export function getAnchorPosition(
 
   switch (anchor) {
     case "top":
-      return { x: x + width / 2, y };
+      return { x: x + width / 2, y: y - ANCHOR_LINE_OFFSET };
     case "right":
-      return { x: x + width, y: y + height / 2 };
+      return { x: x + width + ANCHOR_LINE_OFFSET, y: y + height / 2 };
     case "bottom":
-      return { x: x + width / 2, y: y + height };
+      return { x: x + width / 2, y: y + height + ANCHOR_LINE_OFFSET };
     case "left":
-      return { x, y: y + height / 2 };
+      return { x: x - ANCHOR_LINE_OFFSET, y: y + height / 2 };
   }
 }

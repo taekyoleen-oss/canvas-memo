@@ -15,10 +15,10 @@ interface AnchorPointProps {
 }
 
 const ANCHOR_OFFSET: Record<AnchorSide, React.CSSProperties> = {
-  top:    { top: 0,    left: "50%",  transform: "translate(-50%, -50%)" },
-  right:  { top: "50%", right: 0,   transform: "translate(50%,  -50%)" },
-  bottom: { bottom: 0, left: "50%", transform: "translate(-50%, 100%)" },
-  left:   { top: "50%", left: 0,    transform: "translate(-50%, -50%)" },
+  top:    { top: -12,    left: "50%",  transform: "translate(-50%, -50%)" },
+  right:  { top: "50%",  right: -12,  transform: "translate(50%,  -50%)" },
+  bottom: { bottom: -12, left: "50%", transform: "translate(-50%, 50%)" },
+  left:   { top: "50%",  left: -12,   transform: "translate(-50%, -50%)" },
 };
 
 function calcBestToAnchor(from: Module, to: Module): AnchorSide {

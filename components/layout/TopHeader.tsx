@@ -85,22 +85,6 @@ export default function TopHeader({ boardName, onAddModule, onMenuClick }: TopHe
             🔑
           </a>
         )}
-        <button
-          onClick={onAddModule}
-          className="flex items-center justify-center rounded-lg font-bold"
-          style={{
-            width: 44,
-            height: 44,
-            background: "var(--primary)",
-            color: "var(--primary-fg)",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 22,
-          }}
-          aria-label="모듈 추가"
-        >
-          +
-        </button>
       </div>
     </header>
   );

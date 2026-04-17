@@ -18,6 +18,7 @@ interface CanvasStore {
   removeBoard(boardId: string): void;
   updateBoard(boardId: string, updates: Partial<Omit<Board, "id">>): void;
   setActiveBoard(boardId: string): void;
+  reorderBoards(fromIndex: number, toIndex: number): void;
 
   // 모듈 CRUD
   addModule(
@@ -357,6 +358,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const prev = _history[_history.length - 1];
     const next = _history.slice(0, -1);
     set({ boards: prev, _history: next });
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
+  reorderBoards(fromIndex, toIndex) {
+    set((state) => {
+      const boards = [...state.boards];
+      const [moved] = boards.splice(fromIndex, 1);
+      boards.splice(toIndex, 0, moved);
+      return { boards };
+    });
     debouncedSave?.();
     debouncedSupabaseSync?.();
   },
