@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import TopHeader from "@/components/layout/TopHeader";
@@ -9,6 +9,7 @@ import Sidebar from "@/components/layout/Sidebar";
 import MobileDrawer from "@/components/layout/MobileDrawer";
 import Canvas from "@/components/canvas/Canvas";
 import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
+import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 
 interface AddBoardDialogProps {
@@ -134,6 +135,8 @@ export default function Home() {
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const exitConfirmedRef = useRef(false);
 
   // auth 초기화 (1회)
   useEffect(() => { initAuth(); }, [initAuth]);
@@ -161,6 +164,22 @@ export default function Home() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // 뒤로가기(Back) 버튼 → 앱 종료 확인
+  useEffect(() => {
+    // 현재 페이지 스택에 더미 상태를 추가해 뒤로가기를 가로챔
+    window.history.pushState({ appGuard: true }, "");
+
+    function handlePopState() {
+      if (exitConfirmedRef.current) return;
+      // 다시 더미 상태를 쌓아 다음 뒤로가기도 가로챔
+      window.history.pushState({ appGuard: true }, "");
+      setShowExitConfirm(true);
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   const activeBoard = boards.find((b) => b.id === activeBoardId);
@@ -264,6 +283,7 @@ export default function Home() {
           onMenuClick={() => setShowMobileDrawer(true)}
         />
         {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
+        {activeBoardId && <RichTextToolbar />}
         <div className="flex-1 relative overflow-hidden">
           {activeBoardId ? (
             <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
@@ -296,6 +316,7 @@ export default function Home() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
+          {activeBoardId && <RichTextToolbar />}
           <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
               <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
@@ -319,6 +340,67 @@ export default function Home() {
 
       {/* 모듈 검색 */}
       <ModuleSearch isOpen={showSearch} onClose={() => setShowSearch(false)} />
+
+      {/* 앱 종료 확인 다이얼로그 */}
+      {showExitConfirm && (
+        <div
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ zIndex: 500, background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setShowExitConfirm(false)}
+        >
+          <div
+            className="rounded-2xl p-6 flex flex-col gap-4 mx-4"
+            style={{
+              width: 288,
+              background: "var(--surface-elevated)",
+              border: "1px solid var(--border)",
+              boxShadow: "var(--shadow-lg)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-center">
+              <span style={{ fontSize: 36 }}>👋</span>
+              <p className="text-base font-semibold mt-2" style={{ color: "var(--text-primary)" }}>
+                앱을 종료하시겠습니까?
+              </p>
+              <p className="text-sm mt-1" style={{ color: "var(--text-secondary)" }}>
+                변경 사항은 자동 저장됩니다.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                className="flex-1 py-2 rounded-xl text-sm font-medium transition-colors"
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text-secondary)",
+                  cursor: "pointer",
+                }}
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  exitConfirmedRef.current = true;
+                  setShowExitConfirm(false);
+                  // 히스토리 스택을 뒤로 이동하여 앱 종료 / 이전 페이지로 이동
+                  window.history.go(-2);
+                }}
+                className="flex-1 py-2 rounded-xl text-sm font-semibold"
+                style={{
+                  background: "var(--primary)",
+                  color: "var(--primary-fg)",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                종료
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 모바일 드로어 */}
       <MobileDrawer

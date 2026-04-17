@@ -18,6 +18,7 @@ import ColorPalette from "@/components/ui-overlays/ColorPalette";
 import DeleteConfirmDialog from "@/components/ui-overlays/DeleteConfirmDialog";
 import AnchorPoint from "@/components/canvas/AnchorPoint";
 import { v4 as uuidv4 } from "uuid";
+import { useRichTextStore } from "@/store/richText";
 
 interface ModuleCardWrapperProps {
   module: Module;
@@ -142,7 +143,8 @@ export default function ModuleCardWrapper({
         target.tagName === "BUTTON" || target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
         target.closest("button") || target.closest("[role=button]") ||
-        target.closest("[data-resize-handle]")
+        target.closest("[data-resize-handle]") ||
+        target.closest('[contenteditable="true"]')
       ) return;
 
       didDragRef.current = false;
@@ -624,14 +626,7 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
   switch (module.type) {
     case "memo": {
       const d = module.data as MemoData;
-      return (
-        <textarea
-          value={d.content}
-          onChange={(e) => onChange({ ...d, content: e.target.value })}
-          placeholder="마크다운 형식으로 입력하세요..."
-          style={{ width: "100%", minHeight: 320, background: "transparent", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", fontSize: 14, color: "var(--text-primary)", outline: "none", resize: "vertical", lineHeight: 1.7, boxSizing: "border-box", fontFamily: "inherit" }}
-        />
-      );
+      return <RichMemoFullView data={d} onChange={(nd) => onChange(nd)} />;
     }
     case "schedule": {
       const d = module.data as ScheduleData;
@@ -745,5 +740,52 @@ function ScheduleFullView({ data, onChange }: { data: ScheduleData; onChange: (d
         <button onClick={addItem} style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer", fontSize: 16, fontWeight: 700 }}>+</button>
       </div>
     </div>
+  );
+}
+
+// ── 전체보기 리치 텍스트 메모 에디터 ────────────────────────────────────────
+function RichMemoFullView({ data, onChange }: { data: MemoData; onChange: (d: MemoData) => void }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const isComposing = useRef(false);
+  const setEditorFocused = useRichTextStore((s) => s.setEditorFocused);
+
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
+    if (document.activeElement === el) return;
+    const html = data.content ?? "";
+    if (el.innerHTML !== html) el.innerHTML = html;
+  });
+
+  return (
+    <div
+      ref={editorRef}
+      contentEditable
+      suppressContentEditableWarning
+      data-placeholder="내용을 입력하세요..."
+      onFocus={() => setEditorFocused(true)}
+      onBlur={() => setEditorFocused(false)}
+      onCompositionStart={() => { isComposing.current = true; }}
+      onCompositionEnd={(e) => {
+        isComposing.current = false;
+        onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
+      }}
+      onInput={(e) => {
+        if (isComposing.current) return;
+        onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
+      }}
+      style={{
+        minHeight: 280,
+        outline: "none",
+        fontSize: 14,
+        color: "var(--text-primary)",
+        lineHeight: 1.7,
+        wordBreak: "break-word",
+        overflowWrap: "break-word",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "12px 14px",
+      }}
+    />
   );
 }
