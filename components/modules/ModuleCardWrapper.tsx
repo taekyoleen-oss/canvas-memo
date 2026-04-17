@@ -14,6 +14,7 @@ import ImageModule from "./ImageModule";
 import LinkModule from "./LinkModule";
 import FileModule from "./FileModule";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
+import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
 import DeleteConfirmDialog from "@/components/ui-overlays/DeleteConfirmDialog";
 import AnchorPoint from "@/components/canvas/AnchorPoint";
@@ -568,6 +569,7 @@ export default function ModuleCardWrapper({
                       />
                       <button onClick={() => setIsFullViewOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--text-muted)", lineHeight: 1, padding: "4px 8px" }} aria-label="닫기">✕</button>
                     </div>
+                    {module.type === "memo" && <RichTextToolbar />}
                     <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
                       <FullViewContent module={module} onChange={handleDataChange} />
                     </div>
@@ -748,6 +750,12 @@ function RichMemoFullView({ data, onChange }: { data: MemoData; onChange: (d: Me
   const editorRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
   const setEditorFocused = useRichTextStore((s) => s.setEditorFocused);
+
+  // 전체보기가 열린 동안 툴바를 항상 활성 상태로 유지
+  useEffect(() => {
+    setEditorFocused(true);
+    return () => setEditorFocused(false);
+  }, [setEditorFocused]);
 
   useEffect(() => {
     const el = editorRef.current;

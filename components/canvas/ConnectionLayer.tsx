@@ -349,10 +349,6 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                     </g>
                   );
                 })}
-                {/* 드래그 커서 원 */}
-                <circle cx={curPos.x} cy={curPos.y} r={6 / zoom}
-                  fill="var(--primary)" stroke="white" strokeWidth={handleStroke}
-                  opacity={0.9} style={{ pointerEvents: "none" }} />
               </>
             );
           })()}
@@ -391,12 +387,22 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
       {renderItems.map(({ connection, fromPos, toPos, isSelected }) => {
         if (!isSelected) return null;
         const isDraggingThis = draggingEndpoint?.connectionId === connection.id;
-        if (isDraggingThis) return null; // 드래그 중엔 숨김 (커서 원이 대신 표시됨)
+        const isDraggingFrom = isDraggingThis && draggingEndpoint?.end === "from";
+        const isDraggingTo   = isDraggingThis && draggingEndpoint?.end === "to";
 
-        const fsx = fromPos.x * zoom + vx;
-        const fsy = fromPos.y * zoom + vy;
-        const tsx = toPos.x * zoom + vx;
-        const tsy = toPos.y * zoom + vy;
+        // 드래그 중에는 커서 위치로 핸들을 이동시켜 pointer capture가 유지되도록 함
+        const fsx = isDraggingFrom
+          ? draggingEndpoint!.canvasPos.x * zoom + vx
+          : fromPos.x * zoom + vx;
+        const fsy = isDraggingFrom
+          ? draggingEndpoint!.canvasPos.y * zoom + vy
+          : fromPos.y * zoom + vy;
+        const tsx = isDraggingTo
+          ? draggingEndpoint!.canvasPos.x * zoom + vx
+          : toPos.x * zoom + vx;
+        const tsy = isDraggingTo
+          ? draggingEndpoint!.canvasPos.y * zoom + vy
+          : toPos.y * zoom + vy;
 
         return (
           <div key={`ep-${connection.id}`} style={{ pointerEvents: "none" }}>
@@ -408,7 +414,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                 transform: "translate(-50%,-50%)",
                 width: 32, height: 32,
                 zIndex: 61,
-                cursor: "grab",
+                cursor: isDraggingFrom ? "grabbing" : "grab",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 touchAction: "none",
                 pointerEvents: "all",
@@ -418,7 +424,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
               onPointerUp={(e) => handleEndpointPointerUp(e, connection)}
               onPointerCancel={() => setDraggingEndpoint(null)}
             >
-              <div style={{ width: 12, height: 12, borderRadius: "50%", background: "white", border: "2.5px solid var(--primary)", boxShadow: "0 1px 5px rgba(0,0,0,0.2)" }} />
+              <div style={{ width: isDraggingFrom ? 14 : 12, height: isDraggingFrom ? 14 : 12, borderRadius: "50%", background: isDraggingFrom ? "var(--primary)" : "white", border: "2.5px solid var(--primary)", boxShadow: "0 1px 5px rgba(0,0,0,0.2)" }} />
             </div>
             {/* 끝점 핸들 */}
             <div
@@ -428,7 +434,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                 transform: "translate(-50%,-50%)",
                 width: 32, height: 32,
                 zIndex: 61,
-                cursor: "grab",
+                cursor: isDraggingTo ? "grabbing" : "grab",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 touchAction: "none",
                 pointerEvents: "all",
@@ -438,7 +444,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
               onPointerUp={(e) => handleEndpointPointerUp(e, connection)}
               onPointerCancel={() => setDraggingEndpoint(null)}
             >
-              <div style={{ width: 12, height: 12, borderRadius: "50%", background: "white", border: "2.5px solid var(--primary)", boxShadow: "0 1px 5px rgba(0,0,0,0.2)" }} />
+              <div style={{ width: isDraggingTo ? 14 : 12, height: isDraggingTo ? 14 : 12, borderRadius: "50%", background: isDraggingTo ? "var(--primary)" : "white", border: "2.5px solid var(--primary)", boxShadow: "0 1px 5px rgba(0,0,0,0.2)" }} />
             </div>
           </div>
         );
