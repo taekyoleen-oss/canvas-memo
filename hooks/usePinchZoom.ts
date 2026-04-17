@@ -66,7 +66,9 @@ export function usePinchZoom(
         const target = e.target as HTMLElement;
         const onDraggable =
           !!target.closest("[data-module-wrapper-id]") ||
-          !!target.closest("[data-group-draggable]");
+          !!target.closest("[data-group-draggable]") ||
+          !!target.closest("[data-zoom-controls]") ||
+          !!target.closest("[data-no-pan]");
         if (onDraggable) {
           isPanningRef.current = false;
           return;

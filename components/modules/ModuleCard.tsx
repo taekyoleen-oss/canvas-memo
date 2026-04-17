@@ -12,6 +12,7 @@ interface ModuleCardProps {
   onToggleMinimize?: () => void;
   onTitleChange?: (title: string) => void;
   onFullView?: () => void;
+  contentAreaHeight?: number; // 수동 리사이즈 시 콘텐츠 영역 고정 높이
 }
 
 const COLOR_MAP: Record<ModuleColor, string> = {
@@ -43,6 +44,7 @@ export default function ModuleCard({
   onToggleMinimize,
   onTitleChange,
   onFullView,
+  contentAreaHeight,
 }: ModuleCardProps) {
   const isMinimized = !!module.isMinimized;
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
@@ -69,8 +71,7 @@ export default function ModuleCard({
         border: borderStyle,
         boxShadow,
         borderRadius: 12,
-        minWidth: 200,
-        maxWidth: 320,
+        minWidth: 180,
         overflow: "hidden",
         transition: "border 0.15s, box-shadow 0.15s",
       }}
@@ -143,7 +144,12 @@ export default function ModuleCard({
       {!isMinimized && (
         <>
           {/* 내용 */}
-          <div className="flex flex-col">{children}</div>
+          <div
+            className="flex flex-col"
+            style={contentAreaHeight != null ? { height: contentAreaHeight, overflowY: "auto" } : undefined}
+          >
+            {children}
+          </div>
 
           {/* 펼치기/접기 + 전체 보기 탭 */}
           <div

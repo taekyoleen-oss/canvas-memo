@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import type { Board } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
-import ThemeToggle from "@/components/ui-overlays/ThemeToggle";
 
 const GROUP_COLOR_DOT: Record<string, string> = {
   yellow: "#fbbf24", pink: "#ec4899", teal: "#14b8a6",
@@ -294,16 +293,6 @@ export default function MobileDrawer({
             </div>
           )}
 
-          <div
-            className="flex items-center gap-2"
-            style={{
-              borderTop: "1px solid var(--border)",
-              padding: "12px 16px",
-            }}
-          >
-            <ThemeToggle />
-            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>테마 전환</span>
-          </div>
         </div>
       </div>
     </>

@@ -36,7 +36,7 @@ interface CanvasStore {
   // 커넥션 CRUD
   addConnection(boardId: string, connection: Omit<Connection, "id">): void;
   removeConnection(boardId: string, connectionId: string): void;
-  updateConnection(boardId: string, connectionId: string, updates: Partial<Pick<Connection, "label" | "style" | "color">>): void;
+  updateConnection(boardId: string, connectionId: string, updates: Partial<Pick<Connection, "label" | "style" | "color" | "fromAnchor" | "toAnchor">>): void;
 
   // 그룹 CRUD
   addGroup(boardId: string, group: Omit<Group, "id" | "createdAt" | "updatedAt">): void;
