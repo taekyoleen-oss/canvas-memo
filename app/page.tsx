@@ -166,13 +166,12 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 뒤로가기(Back) 버튼 → 앱 종료 확인
+  // 뒤로가기(Back) 버튼 → 항상 앱 종료 확인 다이얼로그 표시
   useEffect(() => {
-    // 현재 페이지 스택에 더미 상태를 추가해 뒤로가기를 가로챔
+    // 더미 히스토리 상태를 쌓아 뒤로가기를 가로챔
     window.history.pushState({ appGuard: true }, "");
 
     function handlePopState() {
-      if (exitConfirmedRef.current) return;
       // 다시 더미 상태를 쌓아 다음 뒤로가기도 가로챔
       window.history.pushState({ appGuard: true }, "");
       setShowExitConfirm(true);
@@ -395,6 +394,11 @@ export default function Home() {
                   exitConfirmedRef.current = true;
                   setShowExitConfirm(false);
                   window.close();
+                  // window.close()가 모바일 브라우저에서 실패할 경우
+                  // ref를 초기화해 다음 뒤로가기 시 다이얼로그가 다시 뜨도록 함
+                  setTimeout(() => {
+                    exitConfirmedRef.current = false;
+                  }, 500);
                 }}
                 className="flex-1 py-2 rounded-xl text-sm font-semibold"
                 style={{
