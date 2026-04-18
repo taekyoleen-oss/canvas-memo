@@ -172,6 +172,10 @@ export default function Home() {
     window.history.pushState({ appGuard: true }, "");
 
     function handlePopState() {
+      if (exitConfirmedRef.current) {
+        // 종료가 승인된 상태이므로 이후의 라우팅/종료 처리를 방해하지 않음
+        return;
+      }
       // 다시 더미 상태를 쌓아 다음 뒤로가기도 가로챔
       window.history.pushState({ appGuard: true }, "");
       setShowExitConfirm(true);
@@ -393,12 +397,34 @@ export default function Home() {
                 onClick={() => {
                   exitConfirmedRef.current = true;
                   setShowExitConfirm(false);
+
+                  // 1. 일반적인 탭/창 종료 시도
                   window.close();
-                  // window.close()가 모바일 브라우저에서 실패할 경우
-                  // ref를 초기화해 다음 뒤로가기 시 다이얼로그가 다시 뜨도록 함
+
+                  // 2. 모바일 브라우저 우회 닫기 시도
+                  try {
+                    window.opener = null;
+                    window.open("", "_self");
+                    window.close();
+                  } catch (e) {}
+
+                  // 3. 외부 앱/웹뷰 등 네이티브 환경 우회
+                  try {
+                    if ((navigator as any).app && (navigator as any).app.exitApp) {
+                      (navigator as any).app.exitApp();
+                    } else if ((window as any).ReactNativeWebView) {
+                      (window as any).ReactNativeWebView.postMessage("exitApp");
+                    }
+                  } catch (e) {}
+
+                  // 4. 강제 뒤로가기로 앱/브라우저 이탈
+                  // 팝업이 띄워지면서 더미 state가 추가된 상태이므로 2칸 뒤로가기 실행
+                  window.history.go(-2);
+
+                  // 위 방법들이 혹시라도 모두 실패했다면, 다음 뒤로가기 시 팝업을 띄우기 위해 일정 시간 뒤 ref 초기화
                   setTimeout(() => {
                     exitConfirmedRef.current = false;
-                  }, 500);
+                  }, 1500);
                 }}
                 className="flex-1 py-2 rounded-xl text-sm font-semibold"
                 style={{
