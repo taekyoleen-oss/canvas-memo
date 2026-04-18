@@ -178,8 +178,18 @@ export default function Home() {
       setShowExitConfirm(true);
     }
 
+    // 브라우저 탭 닫기 / 새로고침 시 종료 확인
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (exitConfirmedRef.current) return;
+      e.preventDefault();
+    }
+
     window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, []);
 
   const activeBoard = boards.find((b) => b.id === activeBoardId);
@@ -384,8 +394,7 @@ export default function Home() {
                 onClick={() => {
                   exitConfirmedRef.current = true;
                   setShowExitConfirm(false);
-                  // 히스토리 스택을 뒤로 이동하여 앱 종료 / 이전 페이지로 이동
-                  window.history.go(-2);
+                  window.close();
                 }}
                 className="flex-1 py-2 rounded-xl text-sm font-semibold"
                 style={{
