@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
-import type { Board } from "@/types";
+import { useEffect, useMemo, useState } from "react";
+import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
+import { normalizeBoardCategory, sortBoardsForSidebar } from "@/lib/boardCategory";
+import {
+  loadCategoryCollapse,
+  saveCategoryCollapse,
+  type CategoryCollapseState,
+} from "@/lib/sidebarCategoryCollapse";
 
 const GROUP_COLOR_DOT: Record<string, string> = {
   yellow: "#fbbf24", pink: "#ec4899", teal: "#14b8a6",
@@ -16,7 +22,7 @@ interface MobileDrawerProps {
   boards: Board[];
   activeBoardId: string | null;
   onSelect: (id: string) => void;
-  onAdd: () => void;
+  onAdd: (category: BoardCategory) => void;
 }
 
 export default function MobileDrawer({
@@ -30,6 +36,30 @@ export default function MobileDrawer({
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const { user, signOut } = useAuthStore();
+
+  const sorted = useMemo(() => sortBoardsForSidebar(boards), [boards]);
+  const memoBoards = sorted.filter((b) => normalizeBoardCategory(b) === "memo_schedule");
+  const thinkingBoards = sorted.filter((b) => normalizeBoardCategory(b) === "thinking");
+
+  const [catCollapsed, setCatCollapsed] = useState<CategoryCollapseState>({
+    memo_schedule: false,
+    thinking: false,
+  });
+
+  useEffect(() => {
+    setCatCollapsed(loadCategoryCollapse());
+  }, []);
+
+  function toggleCategoryCollapse(category: BoardCategory) {
+    setCatCollapsed((prev) => {
+      const next = { ...prev, [category]: !prev[category] };
+      saveCategoryCollapse(next);
+      return next;
+    });
+  }
+
+  const catLabel = (c: BoardCategory) =>
+    c === "thinking" ? "생각정리" : "메모 및 일정";
 
   // 열릴 때 body 스크롤 잠금
   useEffect(() => {
@@ -115,7 +145,63 @@ export default function MobileDrawer({
           className="flex flex-col gap-0.5 flex-1 overflow-y-auto"
           style={{ padding: "8px" }}
         >
-          {boards.map((board) => {
+          <div
+            className="flex items-center justify-between gap-2 px-2 pt-1"
+            style={{ marginBottom: 2 }}
+          >
+            <button
+              type="button"
+              onClick={() => toggleCategoryCollapse("memo_schedule")}
+              className="flex items-center gap-1 min-w-0 flex-1 rounded-md"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px 2px",
+                textAlign: "left",
+              }}
+              title={
+                catCollapsed.memo_schedule
+                  ? `${catLabel("memo_schedule")} 목록 펼치기`
+                  : `${catLabel("memo_schedule")} 목록 감추기`
+              }
+            >
+              <span
+                style={{ fontSize: 10, color: "var(--text-muted)", width: 14, flexShrink: 0 }}
+                aria-hidden
+              >
+                {catCollapsed.memo_schedule ? "▶" : "▾"}
+              </span>
+              <span
+                className="truncate"
+                style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}
+              >
+                {catLabel("memo_schedule")}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onAdd("memo_schedule");
+                onClose();
+              }}
+              className="rounded-md flex-shrink-0"
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "4px 10px",
+                border: "1px solid var(--border)",
+                background: "var(--surface-hover)",
+                color: "var(--primary)",
+                cursor: "pointer",
+              }}
+              title={`${catLabel("memo_schedule")} 새 보드`}
+            >
+              +
+            </button>
+          </div>
+          {!catCollapsed.memo_schedule &&
+            memoBoards.map((board) => {
             const isActive = board.id === activeBoardId;
             const groups = board.groups ?? [];
             return (
@@ -150,7 +236,6 @@ export default function MobileDrawer({
                   </span>
                 </div>
 
-                {/* 그룹 서브 아이템 */}
                 {isActive && groups.length > 0 && (
                   <div style={{ paddingLeft: 14, marginTop: 2, marginBottom: 2 }}>
                     {groups.map((g) => (
@@ -211,25 +296,203 @@ export default function MobileDrawer({
               </div>
             );
           })}
+          {!catCollapsed.memo_schedule && (
+            <button
+              type="button"
+              onClick={() => {
+                onAdd("memo_schedule");
+                onClose();
+              }}
+              className="flex items-center rounded-lg"
+              style={{
+                minHeight: 40,
+                padding: "0 10px",
+                background: "var(--surface-hover)",
+                border: "1px dashed var(--border)",
+                cursor: "pointer",
+                color: "var(--text-muted)",
+                fontSize: 13,
+                marginTop: 4,
+              }}
+            >
+              + 메모·일정 보드
+            </button>
+          )}
 
-          {/* 새 보드 추가 */}
-          <button
-            onClick={() => { onAdd(); onClose(); }}
-            className="flex items-center rounded-lg"
-            style={{
-              minHeight: 48,
-              padding: "0 10px",
-              background: "transparent",
-              border: "1px dashed var(--border-strong)",
-              cursor: "pointer",
-              color: "var(--text-muted)",
-              gap: 8,
-              marginTop: 4,
-            }}
+          <div
+            className="flex items-center justify-between gap-2 px-2 pt-3"
+            style={{ marginBottom: 2 }}
           >
-            <span style={{ fontSize: 22, width: 32, textAlign: "center" }}>+</span>
-            <span style={{ fontSize: 14 }}>새 보드</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => toggleCategoryCollapse("thinking")}
+              className="flex items-center gap-1 min-w-0 flex-1 rounded-md"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px 2px",
+                textAlign: "left",
+              }}
+              title={
+                catCollapsed.thinking
+                  ? `${catLabel("thinking")} 목록 펼치기`
+                  : `${catLabel("thinking")} 목록 감추기`
+              }
+            >
+              <span
+                style={{ fontSize: 10, color: "var(--text-muted)", width: 14, flexShrink: 0 }}
+                aria-hidden
+              >
+                {catCollapsed.thinking ? "▶" : "▾"}
+              </span>
+              <span
+                className="truncate"
+                style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}
+              >
+                {catLabel("thinking")}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onAdd("thinking");
+                onClose();
+              }}
+              className="rounded-md flex-shrink-0"
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "4px 10px",
+                border: "1px solid var(--border)",
+                background: "var(--surface-hover)",
+                color: "var(--accent)",
+                cursor: "pointer",
+              }}
+              title={`${catLabel("thinking")} 새 보드`}
+            >
+              +
+            </button>
+          </div>
+          {!catCollapsed.thinking &&
+            thinkingBoards.map((board) => {
+            const isActive = board.id === activeBoardId;
+            const groups = board.groups ?? [];
+            return (
+              <div key={board.id}>
+                <div
+                  className="flex items-center rounded-lg"
+                  style={{
+                    minHeight: 48,
+                    padding: "0 10px",
+                    background: isActive ? "var(--primary-soft)" : "transparent",
+                    border: isActive
+                      ? "1px solid var(--primary)"
+                      : "1px solid transparent",
+                    cursor: "pointer",
+                    transition: "background 150ms",
+                  }}
+                  onClick={() => { onSelect(board.id); onClose(); }}
+                >
+                  <span style={{ fontSize: 22, width: 32, textAlign: "center", flexShrink: 0 }}>
+                    {board.icon}
+                  </span>
+                  <span
+                    className="flex-1 truncate"
+                    style={{
+                      fontSize: 15,
+                      paddingLeft: 8,
+                      color: isActive ? "var(--primary)" : "var(--text-primary)",
+                      fontWeight: isActive ? 600 : 400,
+                    }}
+                  >
+                    {board.name}
+                  </span>
+                </div>
+
+                {isActive && groups.length > 0 && (
+                  <div style={{ paddingLeft: 14, marginTop: 2, marginBottom: 2 }}>
+                    {groups.map((g) => (
+                      <div
+                        key={g.id}
+                        className="flex items-center gap-2 rounded-md"
+                        style={{
+                          minHeight: 36,
+                          padding: "0 10px",
+                          cursor: "pointer",
+                          color: "var(--text-secondary)",
+                          fontSize: 13,
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusGroup(g.id);
+                          onClose();
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: GROUP_COLOR_DOT[g.color] ?? "#94a3b8",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span style={{ fontSize: 13, flexShrink: 0 }}>
+                          {g.isCollapsed ? "📁" : "📂"}
+                        </span>
+                        <span className="flex-1 truncate" style={{ fontWeight: 500 }}>
+                          {g.name}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateGroup(board.id, g.id, { isCollapsed: !g.isCollapsed });
+                            if (g.isCollapsed) setFocusGroup(g.id);
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: 10,
+                            color: "var(--text-muted)",
+                            padding: "2px 4px",
+                            borderRadius: 4,
+                          }}
+                          title={g.isCollapsed ? "펼치기" : "접기"}
+                        >
+                          {g.isCollapsed ? "▶" : "▾"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!catCollapsed.thinking && (
+            <button
+              type="button"
+              onClick={() => {
+                onAdd("thinking");
+                onClose();
+              }}
+              className="flex items-center rounded-lg"
+              style={{
+                minHeight: 40,
+                padding: "0 10px",
+                background: "var(--surface-hover)",
+                border: "1px dashed var(--accent)",
+                cursor: "pointer",
+                color: "var(--text-secondary)",
+                fontSize: 13,
+                marginTop: 4,
+                marginBottom: 8,
+              }}
+            >
+              + 생각정리 보드
+            </button>
+          )}
         </div>
 
         {/* 하단: 유저 + 테마 */}

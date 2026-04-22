@@ -1,16 +1,23 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import type { Board } from "@/types";
+import { useState, useRef, useEffect, useMemo } from "react";
+import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import ThemeToggle from "@/components/ui-overlays/ThemeToggle";
+import { normalizeBoardCategory, sortBoardsForSidebar } from "@/lib/boardCategory";
+import {
+  loadCategoryCollapse,
+  saveCategoryCollapse,
+  type CategoryCollapseState,
+} from "@/lib/sidebarCategoryCollapse";
 
 interface SidebarProps {
   boards: Board[];
   activeBoardId: string | null;
   onSelect: (id: string) => void;
-  onAdd: () => void;
+  /** 새 보드 — 카테고리별 */
+  onAdd: (category: BoardCategory) => void;
 }
 
 const GROUP_COLOR_DOT: Record<string, string> = {
@@ -28,13 +35,17 @@ export default function Sidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editIcon, setEditIcon] = useState("");
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [catCollapsed, setCatCollapsed] = useState<CategoryCollapseState>({
+    memo_schedule: false,
+    thinking: false,
+  });
   const editInputRef = useRef<HTMLInputElement>(null);
-  const dragIndexRef = useRef<number | null>(null);
+  const dragRef = useRef<{ category: BoardCategory; index: number } | null>(null);
 
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
-  const reorderBoards = useCanvasStore((s) => s.reorderBoards);
+  const reorderBoardsInCategory = useCanvasStore((s) => s.reorderBoardsInCategory);
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const { user, signOut } = useAuthStore();
@@ -63,7 +74,29 @@ export default function Sidebar({
     }
   }, [editingId]);
 
+  useEffect(() => {
+    setCatCollapsed(loadCategoryCollapse());
+  }, []);
+
+  function toggleCategoryCollapse(category: BoardCategory) {
+    setCatCollapsed((prev) => {
+      const next = { ...prev, [category]: !prev[category] };
+      saveCategoryCollapse(next);
+      return next;
+    });
+  }
+
   const sidebarWidth = isExpanded ? 240 : 64;
+
+  const sorted = useMemo(() => sortBoardsForSidebar(boards), [boards]);
+  const memoBoards = useMemo(
+    () => sorted.filter((b) => normalizeBoardCategory(b) === "memo_schedule"),
+    [sorted]
+  );
+  const thinkingBoards = useMemo(
+    () => sorted.filter((b) => normalizeBoardCategory(b) === "thinking"),
+    [sorted]
+  );
 
   return (
     <aside
@@ -124,36 +157,52 @@ export default function Sidebar({
         className="flex flex-col gap-0.5 flex-1 overflow-y-auto"
         style={{ padding: "8px" }}
       >
-        {boards.map((board, index) => {
-          const isActive = board.id === activeBoardId;
-          const isDragOver = dragOverIndex === index;
-          const groups = board.groups ?? [];
-          return (
+        {(() => {
+          function renderBoardItem(
+            board: Board,
+            category: BoardCategory,
+            localIndex: number,
+            enableDrag: boolean
+          ) {
+            const dragKey = enableDrag
+              ? `${category}-${localIndex}`
+              : `id-${board.id}`;
+            const isActive = board.id === activeBoardId;
+            const isDragOver = dragOverKey === dragKey;
+            const groups = board.groups ?? [];
+            return (
             <div
               key={board.id}
-              draggable
+              draggable={enableDrag}
               onDragStart={(e) => {
-                dragIndexRef.current = index;
+                if (!enableDrag) return;
+                dragRef.current = { category, index: localIndex };
                 e.dataTransfer.effectAllowed = "move";
               }}
               onDragOver={(e) => {
+                if (!enableDrag) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
-                setDragOverIndex(index);
+                setDragOverKey(dragKey);
               }}
-              onDragLeave={() => setDragOverIndex(null)}
+              onDragLeave={() => setDragOverKey(null)}
               onDrop={(e) => {
+                if (!enableDrag) return;
                 e.preventDefault();
-                const from = dragIndexRef.current;
-                if (from !== null && from !== index) {
-                  reorderBoards(from, index);
+                const from = dragRef.current;
+                if (
+                  from &&
+                  from.category === category &&
+                  from.index !== localIndex
+                ) {
+                  reorderBoardsInCategory(category, from.index, localIndex);
                 }
-                dragIndexRef.current = null;
-                setDragOverIndex(null);
+                dragRef.current = null;
+                setDragOverKey(null);
               }}
               onDragEnd={() => {
-                dragIndexRef.current = null;
-                setDragOverIndex(null);
+                dragRef.current = null;
+                setDragOverKey(null);
               }}
               style={{
                 borderTop: isDragOver ? "2px solid var(--primary)" : "2px solid transparent",
@@ -396,16 +445,116 @@ export default function Sidebar({
               )}
             </div>
           );
-        })}
+          }
 
-        {/* 새 보드 추가 버튼 */}
+          if (!isExpanded) {
+            return sorted.map((board) =>
+              renderBoardItem(
+                board,
+                normalizeBoardCategory(board),
+                0,
+                false
+              )
+            );
+          }
+
+          const catLabel = (c: BoardCategory) =>
+            c === "thinking" ? "생각정리" : "메모 및 일정";
+
+          const sectionHeader = (category: BoardCategory) => {
+            const collapsed = catCollapsed[category];
+            return (
+              <div
+                key={`hdr-${category}`}
+                className="flex items-center justify-between gap-1"
+                style={{ marginTop: 10, marginBottom: 4, padding: "0 4px" }}
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleCategoryCollapse(category)}
+                  className="flex items-center gap-1 min-w-0 rounded-md"
+                  style={{
+                    flex: 1,
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "2px 4px",
+                    textAlign: "left",
+                  }}
+                  title={
+                    collapsed
+                      ? `${catLabel(category)} 목록 펼치기`
+                      : `${catLabel(category)} 목록 감추기`
+                  }
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      flexShrink: 0,
+                      width: 14,
+                    }}
+                    aria-hidden
+                  >
+                    {collapsed ? "▶" : "▾"}
+                  </span>
+                  <span
+                    className="truncate"
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "var(--text-muted)",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    {catLabel(category)}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAdd(category)}
+                  className="rounded-md flex-shrink-0"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "2px 8px",
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-hover)",
+                    color: "var(--primary)",
+                    cursor: "pointer",
+                  }}
+                  title={`${catLabel(category)} 새 보드`}
+                >
+                  +
+                </button>
+              </div>
+            );
+          };
+
+          return (
+            <>
+              {sectionHeader("memo_schedule")}
+              {!catCollapsed.memo_schedule &&
+                memoBoards.map((board, i) =>
+                  renderBoardItem(board, "memo_schedule", i, true)
+                )}
+              {sectionHeader("thinking")}
+              {!catCollapsed.thinking &&
+                thinkingBoards.map((board, i) =>
+                  renderBoardItem(board, "thinking", i, true)
+                )}
+            </>
+          );
+        })()}
+
+        {!isExpanded && (
         <button
-          onClick={onAdd}
+          onClick={() => onAdd("memo_schedule")}
           className="flex items-center rounded-lg"
           style={{
             minHeight: 44,
-            padding: isExpanded ? "0 8px" : "0",
-            justifyContent: isExpanded ? "flex-start" : "center",
+            padding: "0",
+            justifyContent: "center",
             background: "transparent",
             border: "1px dashed var(--border-strong)",
             cursor: "pointer",
@@ -414,17 +563,15 @@ export default function Sidebar({
             gap: 8,
             marginTop: 4,
           }}
-          title="새 보드 추가"
+          title="새 보드 (메모·일정) — 카테고리는 펼친 사이드바에서"
         >
           <span
             style={{ fontSize: 20, width: 32, textAlign: "center", flexShrink: 0 }}
           >
             +
           </span>
-          {isExpanded && (
-            <span style={{ fontSize: 14 }}>새 보드</span>
-          )}
         </button>
+        )}
       </div>
 
       {/* 하단: 유저 + 테마 토글 */}

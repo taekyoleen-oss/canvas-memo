@@ -1,54 +1,64 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useCanvasStore } from "@/store/canvas";
 import { getAnchorPosition } from "@/lib/canvas/geometry";
-import { getBezierPath, getBezierMidpoint } from "@/lib/canvas/bezier";
+import { getConnectionMidpoint, getConnectionPathD } from "@/lib/canvas/connectionPaths";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 import type { Connection, Module } from "@/types";
 
 interface ConnectionLayerProps {
   boardId: string;
   viewport: { x: number; y: number; zoom: number };
-}
-
-// ── 연결 삭제 확인 다이얼로그 ──────────────────────────────────────────────
-function DeleteConnectionDialog({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative rounded-2xl p-6 flex flex-col gap-4"
-        style={{ width: 288, background: "var(--surface-elevated)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)" }}>
-        <p className="text-sm font-medium text-center" style={{ color: "var(--text-primary)" }}>이 연결을 삭제하시겠습니까?</p>
-        <div className="flex gap-2">
-          <button onClick={onCancel} className="flex-1 py-2 rounded-xl text-sm transition-colors"
-            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}>취소</button>
-          <button onClick={onConfirm} className="flex-1 py-2 rounded-xl text-sm font-semibold"
-            style={{ background: "#EF4444", color: "#fff", border: "none", cursor: "pointer" }}>삭제</button>
-        </div>
-      </div>
-    </div>
-  );
+  /** 메모·일정 보드: 이 집합에 포함된 모듈끼리의 연결만 그림 */
+  visibleModuleIds?: Set<string> | null;
 }
 
 // ── 그룹 제거 확인 다이얼로그 ──────────────────────────────────────────────
 function GroupRemoveDialog({ groupName, onConfirm, onCancel }: { groupName: string; onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      <div className="relative rounded-2xl p-6 flex flex-col gap-4"
-        style={{ width: 320, background: "var(--surface-elevated)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)" }}>
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center"
+      data-no-pan="true"
+      style={{ touchAction: "manipulation" }}
+    >
+      <div className="absolute inset-0 z-0 bg-black/40" onClick={onCancel} aria-hidden />
+      <div
+        className="relative z-[1] rounded-2xl p-6 flex flex-col gap-4"
+        style={{
+          width: 320,
+          background: "var(--surface-elevated)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow-lg)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
         <p className="text-sm font-medium text-center" style={{ color: "var(--text-primary)" }}>
           <span style={{ fontWeight: 700, color: "var(--primary)" }}>&#39;{groupName}&#39;</span> 그룹에서도 제거하시겠습니까?
         </p>
         <div className="flex gap-2">
-          <button onClick={onCancel} className="flex-1 py-2 rounded-xl text-sm transition-colors"
-            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}>그룹 유지</button>
-          <button onClick={onConfirm} className="flex-1 py-2 rounded-xl text-sm font-semibold"
-            style={{ background: "#EF4444", color: "#fff", border: "none", cursor: "pointer" }}>그룹 제거</button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 py-2 rounded-xl text-sm transition-colors"
+            style={{ border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer" }}
+          >
+            그룹 유지
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 py-2 rounded-xl text-sm font-semibold"
+            style={{ background: "#EF4444", color: "#fff", border: "none", cursor: "pointer" }}
+          >
+            그룹 제거
+          </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -92,7 +102,11 @@ interface DraggingEndpoint {
   canvasPos: { x: number; y: number };
 }
 
-export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerProps) {
+export default function ConnectionLayer({
+  boardId,
+  viewport,
+  visibleModuleIds = null,
+}: ConnectionLayerProps) {
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const removeConnection = useCanvasStore((s) => s.removeConnection);
   const updateConnection = useCanvasStore((s) => s.updateConnection);
@@ -102,7 +116,6 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
   const [editPanelPos, setEditPanelPos] = useState<{ x: number; y: number } | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [draggingEndpoint, setDraggingEndpoint] = useState<DraggingEndpoint | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ connectionId: string; fromModuleId: string; toModuleId: string } | null>(null);
   const [pendingGroupRemove, setPendingGroupRemove] = useState<{ groupId: string; groupName: string; moduleId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -183,20 +196,13 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
     e.preventDefault();
     setSelectedConnectionId(null);
     setEditPanelPos(null);
-    setPendingDelete({ connectionId: connection.id, fromModuleId: connection.fromModuleId, toModuleId: connection.toModuleId });
-  }
-
-  function handleDeleteConfirm() {
-    if (!pendingDelete) return;
-    removeConnection(boardId, pendingDelete.connectionId);
-    setSelectedConnectionId(null);
+    removeConnection(boardId, connection.id);
     const groups = board?.groups ?? [];
-    const { fromModuleId, toModuleId } = pendingDelete;
+    const { fromModuleId, toModuleId } = connection;
     const fromGroup = groups.find((g) => g.moduleIds.includes(fromModuleId));
     const toGroup = groups.find((g) => g.moduleIds.includes(toModuleId));
     if (fromGroup) setPendingGroupRemove({ groupId: fromGroup.id, groupName: fromGroup.name, moduleId: fromModuleId });
     else if (toGroup) setPendingGroupRemove({ groupId: toGroup.id, groupName: toGroup.name, moduleId: toModuleId });
-    setPendingDelete(null);
   }
 
   function handleGroupRemoveConfirm() {
@@ -226,6 +232,13 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
 
   const renderItems: ConnRenderItem[] = [];
   for (const connection of board.connections) {
+    if (
+      visibleModuleIds &&
+      (!visibleModuleIds.has(connection.fromModuleId) ||
+        !visibleModuleIds.has(connection.toModuleId))
+    ) {
+      continue;
+    }
     const fromModule = board.modules.find((m) => m.id === connection.fromModuleId);
     const toModule = board.modules.find((m) => m.id === connection.toModuleId);
     if (!fromModule || !toModule) continue;
@@ -242,15 +255,24 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
 
     const fromPos = getAnchorPosition(fromEffective as typeof fromModule, connection.fromAnchor as AnchorSide);
     const toPos = getAnchorPosition(toEffective as typeof toModule, connection.toAnchor as AnchorSide);
-    const pathD = getBezierPath(fromPos, connection.fromAnchor as AnchorSide, toPos, connection.toAnchor as AnchorSide);
+    const pathD = getConnectionPathD(
+      connection.pathStyle,
+      fromPos,
+      connection.fromAnchor as AnchorSide,
+      toPos,
+      connection.toAnchor as AnchorSide
+    );
 
     const isSelected = selectedConnectionId === connection.id;
     const strokeColor = isSelected ? "var(--primary)" : (connection.color || "var(--connection-default)");
     const dashArray = connection.style === "dashed" ? `${8 / zoom} ${6 / zoom}` : undefined;
 
-    const { x: midX, y: midY } = getBezierMidpoint(
-      fromPos, connection.fromAnchor as AnchorSide,
-      toPos, connection.toAnchor as AnchorSide
+    const { x: midX, y: midY } = getConnectionMidpoint(
+      connection.pathStyle,
+      fromPos,
+      connection.fromAnchor as AnchorSide,
+      toPos,
+      connection.toAnchor as AnchorSide
     );
 
     renderItems.push({
@@ -261,7 +283,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
     });
   }
 
-  if (renderItems.length === 0 && !pendingDelete && !pendingGroupRemove) return null;
+  if (renderItems.length === 0 && !pendingGroupRemove) return null;
 
   const draggingItem = draggingEndpoint ? renderItems.find((r) => r.connection.id === draggingEndpoint.connectionId) : null;
 
@@ -296,7 +318,8 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                 {/* 실제 선 */}
                 <path d={pathD} fill="none" stroke={strokeColor}
                   strokeWidth={isSelected ? swSelected : sw}
-                  strokeDasharray={dashArray} strokeLinecap="round" strokeLinejoin="round"
+                  strokeDasharray={dashArray} strokeLinecap="round"
+                  strokeLinejoin={connection.pathStyle === "orthogonal" ? "miter" : "round"}
                   opacity={opacity} style={{ pointerEvents: "none" }} />
                 {/* 시작 점 */}
                 <circle cx={fromPos.x} cy={fromPos.y} r={dotR} fill={strokeColor} opacity={opacity} style={{ pointerEvents: "none" }} />
@@ -369,7 +392,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
           return (
             <button key={`edit-${connection.id}`} data-no-pan="true"
               onClick={(e) => handleConnectionClick(e, connection, midX, midY)}
-              style={{ position: "absolute", left: screenMidX, top: screenMidY, transform: "translate(-50%,-50%)", width: 44, height: 44, borderRadius: "50%", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 56, padding: 0 }}>
+              style={{ position: "absolute", left: screenMidX, top: screenMidY, transform: "translate(-50%,-50%)", width: 44, height: 44, borderRadius: "50%", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 72, padding: 0 }}>
               <span style={{ width: dotSize, height: dotSize, borderRadius: "50%", background: isSelected ? "var(--primary)" : "var(--surface-elevated)", border: isSelected ? "2px solid var(--surface)" : "1.5px solid var(--border)", color: isSelected ? "#fff" : "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: isSelected ? "0 2px 8px rgba(0,0,0,0.2)" : "0 1px 4px rgba(0,0,0,0.1)", flexShrink: 0 }}>{penSvg}</span>
             </button>
           );
@@ -377,7 +400,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
         return (
           <button key={`edit-${connection.id}`} data-no-pan="true"
             onClick={(e) => handleConnectionClick(e, connection, midX, midY)}
-            style={{ position: "absolute", left: screenMidX, top: screenMidY, transform: "translate(-50%,-50%)", width: dotSize, height: dotSize, borderRadius: "50%", background: isSelected ? "var(--primary)" : "var(--surface-elevated)", border: isSelected ? "2px solid var(--surface)" : "1.5px solid var(--border)", color: isSelected ? "#fff" : "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: isSelected ? 1 : 0.6, zIndex: 56, transition: "all 150ms ease", padding: 0, boxShadow: isSelected ? "0 2px 8px rgba(0,0,0,0.2)" : "none" }}>
+            style={{ position: "absolute", left: screenMidX, top: screenMidY, transform: "translate(-50%,-50%)", width: dotSize, height: dotSize, borderRadius: "50%", background: isSelected ? "var(--primary)" : "var(--surface-elevated)", border: isSelected ? "2px solid var(--surface)" : "1.5px solid var(--border)", color: isSelected ? "#fff" : "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: isSelected ? 1 : 0.6, zIndex: 72, transition: "all 150ms ease", padding: 0, boxShadow: isSelected ? "0 2px 8px rgba(0,0,0,0.2)" : "none" }}>
             {penSvg}
           </button>
         );
@@ -413,7 +436,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                 position: "absolute", left: fsx, top: fsy,
                 transform: "translate(-50%,-50%)",
                 width: 32, height: 32,
-                zIndex: 61,
+                zIndex: 73,
                 cursor: isDraggingFrom ? "grabbing" : "grab",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 touchAction: "none",
@@ -433,7 +456,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
                 position: "absolute", left: tsx, top: tsy,
                 transform: "translate(-50%,-50%)",
                 width: 32, height: 32,
-                zIndex: 61,
+                zIndex: 73,
                 cursor: isDraggingTo ? "grabbing" : "grab",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 touchAction: "none",
@@ -453,7 +476,7 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
       {/* ── 드래그 중 포인터 캡처 오버레이 ─────────────────────────────── */}
       {draggingItem && draggingEndpoint && (
         <div
-          style={{ position: "fixed", inset: 0, zIndex: 58, cursor: "grabbing", touchAction: "none" }}
+          style={{ position: "fixed", inset: 0, zIndex: 76, cursor: "grabbing", touchAction: "none" }}
           onPointerMove={(e) => {
             setDraggingEndpoint((prev) => prev ? { ...prev, canvasPos: toCanvas(e.clientX, e.clientY) } : null);
           }}
@@ -509,6 +532,40 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
               </div>
             </div>
             <div>
+              <p style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 5, marginTop: 0 }}>연결 경로</p>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(
+                  [
+                    { id: "bezier" as const, label: "곡선" },
+                    { id: "orthogonal" as const, label: "직각" },
+                    { id: "straight" as const, label: "직선" },
+                  ] as const
+                ).map((p) => {
+                  const active = (conn.pathStyle ?? "bezier") === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => updateConnection(boardId, conn.id, { pathStyle: p.id })}
+                      style={{
+                        minWidth: 52,
+                        height: 30,
+                        borderRadius: 8,
+                        border: active ? "2px solid var(--primary)" : "1px solid var(--border)",
+                        background: active ? "var(--primary-soft)" : "transparent",
+                        cursor: "pointer",
+                        fontSize: 11,
+                        color: active ? "var(--primary)" : "var(--text-secondary)",
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
               <p style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 5, marginTop: 0 }}>색상</p>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {CONNECTION_COLORS.map((c) => {
@@ -547,15 +604,14 @@ export default function ConnectionLayer({ boardId, viewport }: ConnectionLayerPr
         const screenY = editPanelPos.y * zoom + vy;
         return (
           <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 59 }} onClick={closePanel} />
-            <div style={{ position: "absolute", left: screenX, top: screenY + 20, transform: "translateX(-50%)", zIndex: 60, background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "var(--shadow-lg)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10, minWidth: 216 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ position: "fixed", inset: 0, zIndex: 84 }} onClick={closePanel} />
+            <div style={{ position: "absolute", left: screenX, top: screenY + 20, transform: "translateX(-50%)", zIndex: 85, background: "var(--surface-elevated)", border: "1px solid var(--border)", borderRadius: 14, boxShadow: "var(--shadow-lg)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10, minWidth: 216 }} onClick={(e) => e.stopPropagation()}>
               {panelContent}
             </div>
           </>
         );
       })()}
 
-      {pendingDelete && <DeleteConnectionDialog onConfirm={handleDeleteConfirm} onCancel={() => setPendingDelete(null)} />}
       {pendingGroupRemove && <GroupRemoveDialog groupName={pendingGroupRemove.groupName} onConfirm={handleGroupRemoveConfirm} onCancel={() => setPendingGroupRemove(null)} />}
     </>
   );

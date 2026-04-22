@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
+import type { BoardCategory, ModuleType } from "@/types";
+import { normalizeBoardCategory } from "@/lib/boardCategory";
+import { isModuleTypeAllowedOnCategory } from "@/lib/boardModulePolicy";
 import TopHeader from "@/components/layout/TopHeader";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import Sidebar from "@/components/layout/Sidebar";
@@ -15,22 +18,39 @@ import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 
 interface AddBoardDialogProps {
   isOpen: boolean;
+  initialCategory: BoardCategory;
   onClose: () => void;
-  onConfirm: (name: string, icon: string) => void;
+  onConfirm: (name: string, icon: string, category: BoardCategory) => void;
 }
 
-function AddBoardDialog({ isOpen, onClose, onConfirm }: AddBoardDialogProps) {
+function AddBoardDialog({
+  isOpen,
+  initialCategory,
+  onClose,
+  onConfirm,
+}: AddBoardDialogProps) {
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("📋");
+  const [category, setCategory] = useState<BoardCategory>(initialCategory);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setCategory(initialCategory);
+    setIcon(initialCategory === "thinking" ? "💡" : "📋");
+    setName("");
+  }, [isOpen, initialCategory]);
 
   if (!isOpen) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    onConfirm(name.trim(), icon || "📋");
+    onConfirm(
+      name.trim(),
+      icon || (category === "thinking" ? "💡" : "📋"),
+      category
+    );
     setName("");
-    setIcon("📋");
     onClose();
   }
 
@@ -55,6 +75,34 @@ function AddBoardDialog({ isOpen, onClose, onConfirm }: AddBoardDialogProps) {
         >
           새 보드 만들기
         </h2>
+        <div className="flex rounded-lg p-0.5" style={{ background: "var(--surface-hover)" }}>
+          {(
+            [
+              { id: "memo_schedule" as const, label: "메모 및 일정" },
+              { id: "thinking" as const, label: "생각정리" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                setCategory(tab.id);
+                if (tab.id === "thinking") setIcon((ic) => (ic === "📋" ? "💡" : ic));
+              }}
+              className="flex-1 rounded-md py-2 text-sm font-medium"
+              style={{
+                background: category === tab.id ? "var(--surface-elevated)" : "transparent",
+                color: category === tab.id ? "var(--primary)" : "var(--text-secondary)",
+                border:
+                  category === tab.id ? "1px solid var(--border)" : "1px solid transparent",
+                boxShadow: category === tab.id ? "var(--shadow-sm)" : "none",
+                cursor: "pointer",
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="flex gap-2">
             <input
@@ -141,7 +189,10 @@ export default function Home() {
     resetForLogout,
   } = useCanvasStore();
   const { user, loading: authLoading, init: initAuth } = useAuthStore();
-  const [showAddBoard, setShowAddBoard] = useState(false);
+  const [addBoardState, setAddBoardState] = useState<{
+    open: boolean;
+    category: BoardCategory;
+  }>({ open: false, category: "memo_schedule" });
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [appReady, setAppReady] = useState(false);
@@ -221,16 +272,31 @@ export default function Home() {
   }, []);
 
   const activeBoard = boards.find((b) => b.id === activeBoardId);
+  const activeBoardCategory: BoardCategory = activeBoard
+    ? normalizeBoardCategory(activeBoard)
+    : "memo_schedule";
 
-  function handleAddBoard(name: string, icon: string) {
-    addBoard({ name, icon, color: "#6366F1" });
+  function handleAddBoard(
+    name: string,
+    icon: string,
+    category: BoardCategory
+  ) {
+    addBoard({
+      name,
+      icon,
+      color: category === "thinking" ? "#7C3AED" : "#6366F1",
+      category,
+    });
   }
 
   function handleAddModule(
-    type: import("@/types").ModuleType,
+    type: ModuleType,
     position?: { x: number; y: number }
   ) {
     if (!activeBoardId) return;
+    const catBoard = boards.find((b) => b.id === activeBoardId);
+    const cat = catBoard ? normalizeBoardCategory(catBoard) : "memo_schedule";
+    if (!isModuleTypeAllowedOnCategory(type, cat)) return;
     const defaultData =
       type === "memo"
         ? { title: "새 메모", content: "", previewLines: 2 }
@@ -247,8 +313,9 @@ export default function Home() {
       x: 80 + Math.random() * 200,
       y: 80 + Math.random() * 120,
     };
-    const activeBoard = boards.find((b) => b.id === activeBoardId);
-    const maxZIndex = activeBoard?.modules.reduce((max, m) => Math.max(max, m.zIndex), 0) ?? 0;
+    const boardForZ = boards.find((b) => b.id === activeBoardId);
+    const maxZIndex =
+      boardForZ?.modules.reduce((max, m) => Math.max(max, Number(m.zIndex) || 0), 0) ?? 0;
     addModule(activeBoardId, {
       type,
       position: pos,
@@ -286,29 +353,51 @@ export default function Home() {
             MindCanvas에 오신 걸 환영해요
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: 15 }}>
-            생각을 캔버스 위에 자유롭게 펼쳐보세요.
-            <br />
-            첫 번째 보드를 만들어 시작하세요.
+            메모·일정 보드와 생각정리(브레인스토밍) 보드를 나눠 쓸 수 있어요.
           </p>
-          <button
-            onClick={() => setShowAddBoard(true)}
-            className="rounded-xl px-8 font-semibold"
-            style={{
-              height: 52,
-              background: "var(--primary)",
-              color: "var(--primary-fg)",
-              border: "none",
-              cursor: "pointer",
-              fontSize: 16,
-              boxShadow: "var(--shadow-md)",
-            }}
-          >
-            + 첫 보드 만들기
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md justify-center">
+            <button
+              type="button"
+              onClick={() =>
+                setAddBoardState({ open: true, category: "memo_schedule" })
+              }
+              className="rounded-xl px-6 font-semibold"
+              style={{
+                height: 52,
+                background: "var(--primary)",
+                color: "var(--primary-fg)",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 15,
+                boxShadow: "var(--shadow-md)",
+              }}
+            >
+              + 메모·일정 첫 보드
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setAddBoardState({ open: true, category: "thinking" })
+              }
+              className="rounded-xl px-6 font-semibold"
+              style={{
+                height: 52,
+                background: "var(--surface-elevated)",
+                color: "var(--primary)",
+                border: "2px solid var(--primary)",
+                cursor: "pointer",
+                fontSize: 15,
+                boxShadow: "var(--shadow-md)",
+              }}
+            >
+              + 생각정리 첫 보드
+            </button>
+          </div>
         </div>
         <AddBoardDialog
-          isOpen={showAddBoard}
-          onClose={() => setShowAddBoard(false)}
+          isOpen={addBoardState.open}
+          initialCategory={addBoardState.category}
+          onClose={() => setAddBoardState((s) => ({ ...s, open: false }))}
           onConfirm={handleAddBoard}
         />
       </div>
@@ -324,10 +413,20 @@ export default function Home() {
       >
         <TopHeader
           boardName={activeBoard?.name ?? "보드"}
-          onAddModule={() => handleAddModule("memo")}
+          onAddModule={() =>
+            handleAddModule(
+              activeBoardCategory === "thinking" ? "brainstorm" : "memo"
+            )
+          }
           onMenuClick={() => setShowMobileDrawer(true)}
         />
-        {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
+        {activeBoardId && (
+          <ModuleToolbar
+            boardCategory={activeBoardCategory}
+            onAdd={handleAddModule}
+            onSearch={() => setShowSearch(true)}
+          />
+        )}
         {activeBoardId && <RichTextToolbar />}
         <div className="flex-1 relative overflow-hidden">
           {activeBoardId ? (
@@ -344,7 +443,9 @@ export default function Home() {
           boards={boards}
           activeBoardId={activeBoardId}
           onSelect={setActiveBoard}
-          onAdd={() => setShowAddBoard(true)}
+          onAdd={(category) =>
+            setAddBoardState({ open: true, category })
+          }
         />
       </div>
 
@@ -357,10 +458,18 @@ export default function Home() {
           boards={boards}
           activeBoardId={activeBoardId}
           onSelect={setActiveBoard}
-          onAdd={() => setShowAddBoard(true)}
+          onAdd={(category) =>
+            setAddBoardState({ open: true, category })
+          }
         />
         <div className="flex-1 flex flex-col overflow-hidden">
-          {activeBoardId && <ModuleToolbar onAdd={handleAddModule} onSearch={() => setShowSearch(true)} />}
+          {activeBoardId && (
+            <ModuleToolbar
+              boardCategory={activeBoardCategory}
+              onAdd={handleAddModule}
+              onSearch={() => setShowSearch(true)}
+            />
+          )}
           {activeBoardId && <RichTextToolbar />}
           <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
@@ -378,8 +487,9 @@ export default function Home() {
 
       {/* 보드 추가 다이얼로그 */}
       <AddBoardDialog
-        isOpen={showAddBoard}
-        onClose={() => setShowAddBoard(false)}
+        isOpen={addBoardState.open}
+        initialCategory={addBoardState.category}
+        onClose={() => setAddBoardState((s) => ({ ...s, open: false }))}
         onConfirm={handleAddBoard}
       />
 
@@ -480,7 +590,9 @@ export default function Home() {
         boards={boards}
         activeBoardId={activeBoardId}
         onSelect={(id) => { setActiveBoard(id); }}
-        onAdd={() => setShowAddBoard(true)}
+        onAdd={(category) =>
+          setAddBoardState({ open: true, category })
+        }
       />
     </>
   );

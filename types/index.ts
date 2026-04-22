@@ -7,11 +7,18 @@ export interface AppData {
   lastOpenedBoardId: string | null;
 }
 
+/** 메모·일정 캔버스 vs 생각정리(브레인스토밍 중심) 캔버스 */
+export type BoardCategory = "memo_schedule" | "thinking";
+
 export interface Board {
   id: string; // UUID
   name: string;
   icon: string; // 이모지
   color: string; // hex
+  /** 보드 종류 — 생략 시 로컬/레거시는 memo_schedule */
+  category?: BoardCategory;
+  /** 같은 category 안에서 사이드바 정렬 */
+  sidebarOrder?: number;
   createdAt: string; // ISO
   updatedAt: string; // ISO
   modules: Module[];
@@ -32,6 +39,25 @@ export type ModuleColor =
   | "orange"
   | "teal";
 
+/** 카드 외곽 — 생략 시 기존과 동일하게 둥근 사각형 */
+export type ModuleShape =
+  | "rectangle"
+  | "rounded"
+  | "ellipse"
+  | "diamond"
+  | "pill"
+  | "circle";
+
+/** 연결선 경로 — 생략 시 베지어 곡선 */
+export type ConnectionPathStyle = "bezier" | "orthogonal" | "straight";
+
+/** 방향 확장(화살표)으로 새 모듈 만들 때 옵션 */
+export interface ExpandAdjacentModuleOptions {
+  moduleShape: ModuleShape;
+  templateId?: string;
+  pathStyle?: ConnectionPathStyle;
+}
+
 export interface Module {
   id: string;
   type: ModuleType;
@@ -39,6 +65,8 @@ export interface Module {
   size: { width: number; height: number };
   zIndex: number;
   color: ModuleColor;
+  /** 생략 시 `rounded`와 동일 */
+  shape?: ModuleShape;
   isExpanded: boolean;
   isMinimized?: boolean; // 제목만 표시하는 최소화 상태
   createdAt: string;
@@ -58,16 +86,43 @@ export interface ScheduleData {
   previewCount: number; // 기본 3
 }
 
+export type BrainstormItemStatus = "raw" | "refined" | "archived";
+
+/** 캔버스에 삽입하는 맵 템플릿 종류(여러 모듈 + 연결) */
+export type BrainstormMapType =
+  | "brainstorm"
+  | "process_map"
+  | "mind_map"
+  | "workflow_map"
+  | "knowledge_map"
+  | "flowchart"
+  | "concept_map"
+  | "strategy_map"
+  | "visual_map"
+  | "swot_map"
+  | "mental_map";
+
+/** 카드 안 아이디어 간 연결(캔버스 Connection과 별개) */
+export interface BrainstormItemLink {
+  id: string;
+  fromItemId: string;
+  toItemId: string;
+  label?: string;
+}
+
 /** 빠른 아이디어 나열(일정 모듈과 유사한 UX, 완료 체크 없음) */
 export interface BrainstormItem {
   id: string;
   text: string;
+  status?: BrainstormItemStatus;
 }
 
 export interface BrainstormData {
   title: string;
   items: BrainstormItem[];
   previewCount: number; // 접힌 상태에서 보여 줄 아이디어 개수, 기본 4
+  /** 항목 간 연결(생각정리 전용) */
+  itemLinks?: BrainstormItemLink[];
 }
 
 export interface ScheduleItem {
@@ -108,6 +163,8 @@ export interface Connection {
   label: string;
   style: "solid" | "dashed";
   color: string;
+  /** 생략 시 `bezier` */
+  pathStyle?: ConnectionPathStyle;
 }
 
 export type GroupColor =
@@ -128,4 +185,10 @@ export interface Group {
   isCollapsed: boolean;
   createdAt: string;
   updatedAt: string;
+  /** 맵 템플릿으로 한 번에 넣은 그룹일 때 */
+  mapTemplateId?: BrainstormMapType;
+  /** 균일 확대·축소 기준점(캔버스 좌표) */
+  mapPivot?: { x: number; y: number };
+  /** 누적 스케일(표시용), 기본 1 */
+  mapScale?: number;
 }

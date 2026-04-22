@@ -1,14 +1,25 @@
 "use client";
 
-import type { ModuleType } from "@/types";
-import { STANDARD_MODULE_OPTIONS, BRAINSTORM_ADD_OPTION } from "./moduleAddOptions";
+import type { BoardCategory, ModuleType } from "@/types";
+import {
+  MEMO_SCHEDULE_MODULE_OPTIONS,
+  STANDARD_MODULE_OPTIONS,
+  BRAINSTORM_ADD_OPTION,
+} from "./moduleAddOptions";
 
 interface ModuleToolbarProps {
   onAdd: (type: ModuleType) => void;
   onSearch: () => void;
+  boardCategory?: BoardCategory;
 }
 
-export default function ModuleToolbar({ onAdd, onSearch }: ModuleToolbarProps) {
+export default function ModuleToolbar({
+  onAdd,
+  onSearch,
+  boardCategory = "memo_schedule",
+}: ModuleToolbarProps) {
+  const isThinking = boardCategory === "thinking";
+
   return (
     <div
       className="flex items-center gap-2 px-4 flex-wrap"
@@ -23,65 +34,79 @@ export default function ModuleToolbar({ onAdd, onSearch }: ModuleToolbarProps) {
         className="text-xs font-medium mr-1"
         style={{ color: "var(--text-muted)" }}
       >
-        추가
+        {isThinking ? "생각정리" : "메모·일정"}
       </span>
-      {STANDARD_MODULE_OPTIONS.map((option) => (
-        <button
-          key={option.type}
-          onClick={() => onAdd(option.type)}
-          className="flex items-center gap-1.5 rounded-lg px-3"
-          style={{
-            height: 34,
-            background: "var(--surface-elevated)",
-            border: "1px solid var(--border)",
-            cursor: "pointer",
-            fontSize: 13,
-            color: "var(--text-primary)",
-            fontWeight: 500,
-            whiteSpace: "nowrap",
-          }}
-          title={`${option.label} 추가`}
-        >
-          <span style={{ fontSize: 15 }}>{option.icon}</span>
-          {option.label}
-        </button>
-      ))}
 
-      {/* 브레인스토밍: 일반 모듈과 구분된 그룹 */}
-      <div
-        className="flex items-center gap-2 pl-3 ml-1"
-        style={{
-          borderLeft: "1px solid var(--border)",
-        }}
-      >
-        <span
-          className="text-[10px] font-semibold uppercase tracking-wide hidden sm:inline"
-          style={{ color: "var(--text-muted)" }}
-        >
-          발상
-        </span>
-        <button
-          type="button"
-          onClick={() => onAdd(BRAINSTORM_ADD_OPTION.type)}
-          className="flex items-center gap-1.5 rounded-lg px-3"
-          style={{
-            height: 34,
-            background: "var(--surface-hover)",
-            border: "1px dashed var(--accent)",
-            cursor: "pointer",
-            fontSize: 13,
-            color: "var(--text-primary)",
-            fontWeight: 600,
-            whiteSpace: "nowrap",
-          }}
-          title={`${BRAINSTORM_ADD_OPTION.label} 추가`}
-        >
-          <span style={{ fontSize: 15 }}>{BRAINSTORM_ADD_OPTION.icon}</span>
-          {BRAINSTORM_ADD_OPTION.label}
-        </button>
-      </div>
+      {isThinking ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onAdd(BRAINSTORM_ADD_OPTION.type)}
+            className="flex items-center gap-1.5 rounded-lg px-3"
+            style={{
+              height: 34,
+              background: "var(--primary-soft)",
+              border: "1px solid var(--primary)",
+              cursor: "pointer",
+              fontSize: 13,
+              color: "var(--primary)",
+              fontWeight: 700,
+              whiteSpace: "nowrap",
+            }}
+            title="아이디어 카드 — 캔버스 하단 🗺 맵 템플릿으로 여러 모듈을 한 번에 넣을 수 있어요"
+          >
+            <span style={{ fontSize: 15 }}>{BRAINSTORM_ADD_OPTION.icon}</span>
+            {BRAINSTORM_ADD_OPTION.label}
+          </button>
+          {STANDARD_MODULE_OPTIONS.map((option) => (
+            <button
+              key={option.type}
+              type="button"
+              onClick={() => onAdd(option.type)}
+              className="flex items-center gap-1.5 rounded-lg px-3"
+              style={{
+                height: 34,
+                background: "var(--surface-elevated)",
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                fontSize: 13,
+                color: "var(--text-primary)",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}
+              title={`${option.label} 추가`}
+            >
+              <span style={{ fontSize: 15 }}>{option.icon}</span>
+              {option.label}
+            </button>
+          ))}
+        </>
+      ) : (
+        <>
+          {MEMO_SCHEDULE_MODULE_OPTIONS.map((option) => (
+            <button
+              key={option.type}
+              onClick={() => onAdd(option.type)}
+              className="flex items-center gap-1.5 rounded-lg px-3"
+              style={{
+                height: 34,
+                background: "var(--surface-elevated)",
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                fontSize: 13,
+                color: "var(--text-primary)",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}
+              title={`${option.label} 추가`}
+            >
+              <span style={{ fontSize: 15 }}>{option.icon}</span>
+              {option.label}
+            </button>
+          ))}
+        </>
+      )}
 
-      {/* 구분선 */}
       <div
         style={{
           width: 1,
@@ -92,7 +117,6 @@ export default function ModuleToolbar({ onAdd, onSearch }: ModuleToolbarProps) {
         }}
       />
 
-      {/* 검색 버튼 */}
       <button
         onClick={onSearch}
         className="flex items-center gap-1.5 rounded-lg px-3"

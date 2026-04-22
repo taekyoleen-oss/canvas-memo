@@ -1,9 +1,12 @@
 "use client";
 
-import type { Module, ModuleColor } from "@/types";
+import type { CSSProperties } from "react";
+import type { Module, ModuleColor, ModuleShape } from "@/types";
 
 interface ModuleCardProps {
   module: Module;
+  /** 생각정리 보드: 마름모·타원 등 복잡한 외곽 대신 네모/둥근 네모/원만 사용 */
+  simpleExterior?: boolean;
   isSelected?: boolean;
   isConnectingSource?: boolean;
   children: React.ReactNode;
@@ -37,6 +40,7 @@ const MODULE_TYPE_ICON: Record<Module["type"], string> = {
 
 export default function ModuleCard({
   module,
+  simpleExterior = false,
   isSelected,
   isConnectingSource,
   children,
@@ -49,6 +53,14 @@ export default function ModuleCard({
 }: ModuleCardProps) {
   const isMinimized = !!module.isMinimized;
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
+  const rawShape: ModuleShape = module.shape ?? "rounded";
+  const shape: ModuleShape = simpleExterior
+    ? rawShape === "circle"
+      ? "circle"
+      : rawShape === "rectangle"
+        ? "rectangle"
+        : "rounded"
+    : rawShape;
 
   let borderStyle: string;
   let boxShadow: string;
@@ -64,19 +76,43 @@ export default function ModuleCard({
     boxShadow = "var(--shadow-md)";
   }
 
+  const shellStyle: CSSProperties = {
+    background: bgColor,
+    border: borderStyle,
+    boxShadow,
+    minWidth: 180,
+    overflow: "hidden",
+    transition: "border 0.15s, box-shadow 0.15s",
+  };
+  switch (shape) {
+    case "rectangle":
+      shellStyle.borderRadius = 6;
+      break;
+    case "rounded":
+      shellStyle.borderRadius = 12;
+      break;
+    case "ellipse":
+      shellStyle.borderRadius = "38% / 28%";
+      break;
+    case "diamond":
+      shellStyle.borderRadius = 0;
+      shellStyle.clipPath = "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)";
+      break;
+    case "pill":
+      shellStyle.borderRadius = 9999;
+      break;
+    case "circle":
+      shellStyle.borderRadius = simpleExterior ? 9999 : "50%";
+      if (!simpleExterior) {
+        shellStyle.clipPath = "circle(closest-side at 50% 50%)";
+      }
+      break;
+    default:
+      shellStyle.borderRadius = 12;
+  }
+
   return (
-    <div
-      className="flex flex-col rounded-xl"
-      style={{
-        background: bgColor,
-        border: borderStyle,
-        boxShadow,
-        borderRadius: 12,
-        minWidth: 180,
-        overflow: "hidden",
-        transition: "border 0.15s, box-shadow 0.15s",
-      }}
-    >
+    <div className="flex flex-col" style={shellStyle}>
       {/* 헤더 */}
       <div
         className="flex items-center gap-2 px-3"

@@ -12,6 +12,11 @@ interface AnchorPointProps {
   moduleId: string;
   anchor: AnchorSide;
   viewport: { x: number; y: number; zoom: number };
+  /**
+   * 출력 앵커에서 짧은 탭(드래그 없음) 시 호출되면 연결 모드로 들어가지 않음.
+   * 예: 메모에서 해당 방향 확장 화살표만 표시.
+   */
+  onOutputShortTap?: (anchor: AnchorSide) => void;
 }
 
 const ANCHOR_OFFSET: Record<AnchorSide, React.CSSProperties> = {
@@ -32,7 +37,11 @@ function calcBestToAnchor(from: Module, to: Module): AnchorSide {
 }
 
 export default function AnchorPoint({
-  type, moduleId, anchor, viewport,
+  type,
+  moduleId,
+  anchor,
+  viewport,
+  onOutputShortTap,
 }: AnchorPointProps) {
   const mode             = useConnectionStore((s) => s.mode);
   const fromModuleId     = useConnectionStore((s) => s.fromModuleId);
@@ -159,6 +168,11 @@ export default function AnchorPoint({
       // 빈 공간 드롭 → 취소
       cancelConnecting();
     } else {
+      // 짧은 탭: 메모 등에서 확장 화살표만 켤 때 (연결 모드로는 들어가지 않음)
+      if (onOutputShortTap) {
+        onOutputShortTap(anchor);
+        return;
+      }
       // 클릭(드래그 없음): 클릭-투-커넥트 모드 토글
       if (isConnecting && isThisSource) {
         cancelConnecting();

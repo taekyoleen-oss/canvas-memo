@@ -1,9 +1,19 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
-import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData, BrainstormData } from "@/types";
+import type {
+  Module,
+  MemoData,
+  ScheduleData,
+  ImageData,
+  LinkData,
+  FileData,
+  BrainstormData,
+  ExpandAdjacentModuleOptions,
+} from "@/types";
 import type { AnchorSide } from "@/lib/canvas/geometry";
+import { normalizeBoardCategory } from "@/lib/boardCategory";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -13,12 +23,16 @@ import ScheduleModule from "./ScheduleModule";
 import ImageModule from "./ImageModule";
 import LinkModule from "./LinkModule";
 import FileModule from "./FileModule";
-import BrainstormModule from "./BrainstormModule";
+import BrainstormModule, {
+  type BrainstormCanvasLinkSummary,
+} from "./BrainstormModule";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
 import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
 import DeleteConfirmDialog from "@/components/ui-overlays/DeleteConfirmDialog";
 import AnchorPoint from "@/components/canvas/AnchorPoint";
+import ModuleExpandArrows from "@/components/canvas/ModuleExpandArrows";
+import AdjacentExpandDialog from "@/components/canvas/AdjacentExpandDialog";
 import { v4 as uuidv4 } from "uuid";
 import { useRichTextStore } from "@/store/richText";
 
@@ -51,6 +65,18 @@ function getBestToAnchor(fromModule: Module, toModule: Module): AnchorSide {
 // ── 리사이즈 타입 ────────────────────────────────────────────────────────
 type ResizeType = "e" | "s" | "se";
 
+function connectionPeerTitle(other: Module | undefined): string {
+  if (!other) return "모듈";
+  const d = other.data as { title?: string; fileName?: string };
+  if (typeof d.title === "string" && d.title.trim()) return d.title.trim();
+  if (other.type === "file") return d.fileName || "파일";
+  if (other.type === "link") return (other.data as LinkData).title || "링크";
+  if (other.type === "memo") return "메모";
+  if (other.type === "brainstorm") return "브레인스토밍";
+  if (other.type === "schedule") return "일정";
+  return other.type;
+}
+
 export default function ModuleCardWrapper({
   module,
   boardId,
@@ -66,7 +92,26 @@ export default function ModuleCardWrapper({
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
   const duplicateModule = useCanvasStore((s) => s.duplicateModule);
+  const expandAdjacentModule = useCanvasStore((s) => s.expandAdjacentModule);
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
+  const thinkingBoard = board ? normalizeBoardCategory(board) === "thinking" : false;
+
+  const brainstormCanvasLinks: BrainstormCanvasLinkSummary[] = useMemo(() => {
+    if (module.type !== "brainstorm" || !board) return [];
+    return board.connections
+      .filter((c) => c.fromModuleId === module.id || c.toModuleId === module.id)
+      .map((c) => {
+        const otherId =
+          c.fromModuleId === module.id ? c.toModuleId : c.fromModuleId;
+        const other = board.modules.find((m) => m.id === otherId);
+        return {
+          connectionId: c.id,
+          otherTitle: connectionPeerTitle(other),
+          label: c.label || "",
+          outgoing: c.fromModuleId === module.id,
+        };
+      });
+  }, [board, module.type, module.id]);
 
   const connectionMode     = useConnectionStore((s) => s.mode);
   const fromModuleId       = useConnectionStore((s) => s.fromModuleId);
@@ -80,6 +125,9 @@ export default function ModuleCardWrapper({
   const [isColorPaletteOpen, setIsColorPaletteOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [showAnchors, setShowAnchors] = useState(false);
+  /** 메모: 출력 앵커를 짧게 누른 방향에만 확장 화살표 표시 */
+  const [memoExpandAnchorSide, setMemoExpandAnchorSide] = useState<AnchorSide | null>(null);
+  const [expandDirection, setExpandDirection] = useState<AnchorSide | null>(null);
   const [isFullViewOpen, setIsFullViewOpen] = useState(false);
   const [, forceUpdate] = useState(0);
 
@@ -106,6 +154,8 @@ export default function ModuleCardWrapper({
     moduleX: number;
     moduleY: number;
   } | null>(null);
+  /** setIsDragging 반영 전에도 이동 로직이 돌아가도록 상태와 별도로 둠 */
+  const dragActiveRef = useRef(false);
   const didDragRef = useRef(false);
   const multiDragStartedRef = useRef(false);
 
@@ -134,6 +184,10 @@ export default function ModuleCardWrapper({
     const id = setTimeout(() => document.addEventListener("click", close, { once: true }), 0);
     return () => { clearTimeout(id); document.removeEventListener("click", close); };
   }, [isContextMenuOpen]);
+
+  useEffect(() => {
+    if (!isSelected) setMemoExpandAnchorSide(null);
+  }, [isSelected]);
 
   const longPress = useLongPress(() => { setIsContextMenuOpen(true); });
 
@@ -174,8 +228,9 @@ export default function ModuleCardWrapper({
       const dx = e.clientX - dragStartRef.current.pointerX;
       const dy = e.clientY - dragStartRef.current.pointerY;
 
-      if (!isDragging && Math.sqrt(dx * dx + dy * dy) > 5) {
+      if (!dragActiveRef.current && Math.sqrt(dx * dx + dy * dy) > 5) {
         useCanvasStore.getState().pushHistory();
+        dragActiveRef.current = true;
         setIsDragging(true);
         didDragRef.current = true;
         if (isMultiSelected && onMultiDragStart && !multiDragStartedRef.current) {
@@ -184,7 +239,7 @@ export default function ModuleCardWrapper({
         }
       }
 
-      if (isDragging) {
+      if (dragActiveRef.current) {
         const canvasDx = dx / viewport.zoom;
         const canvasDy = dy / viewport.zoom;
         pendingMoveRef.current = { canvasDx, canvasDy };
@@ -203,7 +258,7 @@ export default function ModuleCardWrapper({
         }
       }
     },
-    [isDragging, viewport.zoom, boardId, module.id, updateModule, isMultiSelected, onMultiDragStart, onMultiDragMove]
+    [viewport.zoom, boardId, module.id, updateModule, isMultiSelected, onMultiDragStart, onMultiDragMove]
   );
 
   const handlePointerUp = useCallback(
@@ -214,18 +269,19 @@ export default function ModuleCardWrapper({
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
+      }
+      if (dragActiveRef.current && pendingMoveRef.current && dragStartRef.current) {
         const move = pendingMoveRef.current;
         const start = dragStartRef.current;
-        if (move && start) {
-          if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
-            onMultiDragMove(move.canvasDx, move.canvasDy);
-          } else {
-            updateModule(boardId, module.id, { position: { x: start.moduleX + move.canvasDx, y: start.moduleY + move.canvasDy } });
-          }
+        if (isMultiSelected && onMultiDragMove && multiDragStartedRef.current) {
+          onMultiDragMove(move.canvasDx, move.canvasDy);
+        } else {
+          updateModule(boardId, module.id, { position: { x: start.moduleX + move.canvasDx, y: start.moduleY + move.canvasDy } });
         }
-        pendingMoveRef.current = null;
       }
+      pendingMoveRef.current = null;
       dragStartRef.current = null;
+      dragActiveRef.current = false;
       multiDragStartedRef.current = false;
       setIsDragging(false);
     },
@@ -334,7 +390,7 @@ export default function ModuleCardWrapper({
       type: _moduleClipboard.type,
       position: { x: module.position.x + 30, y: module.position.y + 30 },
       size: { width: 200, height: 100 },
-      zIndex: module.zIndex + 1,
+      zIndex: Math.max(1, Number(module.zIndex ?? 0)) + 1,
       color: module.color,
       isExpanded: false,
       data: JSON.parse(JSON.stringify(_moduleClipboard.data)),
@@ -384,7 +440,15 @@ export default function ModuleCardWrapper({
       case "image": return <ImageModule data={module.data as ImageData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "link": return <LinkModule data={module.data as LinkData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "file": return <FileModule data={module.data as FileData} moduleId={module.id} isExpanded={module.isExpanded} onChange={handleDataChange} />;
-      case "brainstorm": return <BrainstormModule data={module.data as BrainstormData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
+      case "brainstorm":
+        return (
+          <BrainstormModule
+            data={module.data as BrainstormData}
+            isExpanded={module.isExpanded}
+            onChange={handleDataChange}
+            canvasLinkSummaries={brainstormCanvasLinks}
+          />
+        );
       default: return null;
     }
   }
@@ -410,7 +474,7 @@ export default function ModuleCardWrapper({
           top: module.position.y,
           width: module.size.width,
           ...(manualHeightRef.current !== null ? { height: module.size.height } : {}),
-          zIndex: (isDragging || isResizing) ? 1000 : module.zIndex,
+          zIndex: (isDragging || isResizing) ? 1000 : Math.max(1, Number(module.zIndex ?? 0)),
           transform: isDragging ? "scale(1.03)" : "scale(1)",
           transition: (isDragging || isResizing) ? "none" : "transform 0.15s ease",
           cursor: isConnectTarget ? "crosshair" : isDragging ? "grabbing" : "grab",
@@ -445,7 +509,18 @@ export default function ModuleCardWrapper({
 
         {(showAnchors || isConnectingMode || isDragSource) &&
           (["top", "right", "bottom", "left"] as const).map((side) => (
-            <AnchorPoint key={`out-${side}`} type="output" moduleId={module.id} anchor={side} viewport={viewport} />
+            <AnchorPoint
+              key={`out-${side}`}
+              type="output"
+              moduleId={module.id}
+              anchor={side}
+              viewport={viewport}
+              onOutputShortTap={
+                module.type === "memo"
+                  ? (a) => setMemoExpandAnchorSide(a)
+                  : undefined
+              }
+            />
           ))}
         {isConnectingMode &&
           (["top", "right", "bottom", "left"] as const).map((side) => (
@@ -454,6 +529,7 @@ export default function ModuleCardWrapper({
 
         <ModuleCard
           module={module}
+          simpleExterior={thinkingBoard}
           isSelected={isSelected}
           isConnectingSource={isConnectingSource}
           onContextMenu={(rect) => { setMenuAnchorRect(rect); setIsContextMenuOpen(true); }}
@@ -465,6 +541,19 @@ export default function ModuleCardWrapper({
         >
           {renderModuleContent()}
         </ModuleCard>
+
+        {module.type === "brainstorm" && !module.isMinimized && !isConnectingMode && (
+          <ModuleExpandArrows onArrowClick={(dir) => setExpandDirection(dir)} />
+        )}
+        {module.type === "memo" &&
+          !module.isMinimized &&
+          !isConnectingMode &&
+          memoExpandAnchorSide && (
+            <ModuleExpandArrows
+              visibleSides={[memoExpandAnchorSide]}
+              onArrowClick={(dir) => setExpandDirection(dir)}
+            />
+          )}
 
         {/* ── 리사이즈 핸들 (펼쳐진 상태에서만) ──────────────────────── */}
         {module.isExpanded && !module.isMinimized && (
@@ -527,6 +616,24 @@ export default function ModuleCardWrapper({
           </>
         )}
       </div>
+
+      <AdjacentExpandDialog
+        open={expandDirection !== null}
+        direction={expandDirection}
+        moduleType={module.type === "memo" ? "memo" : "brainstorm"}
+        simpleShapesOnly={thinkingBoard}
+        onCancel={() => {
+          setExpandDirection(null);
+          setMemoExpandAnchorSide(null);
+        }}
+        onConfirm={(opts: ExpandAdjacentModuleOptions) => {
+          if (expandDirection) {
+            expandAdjacentModule(boardId, module.id, expandDirection, opts);
+          }
+          setExpandDirection(null);
+          setMemoExpandAnchorSide(null);
+        }}
+      />
 
       {createPortal(
         <>
@@ -627,6 +734,26 @@ function ImageFullView({ module, onClose }: { module: Module; onClose: () => voi
 
 // ── 전체 보기 내용 (편집 가능) ────────────────────────────────────────────
 function FullViewContent({ module, onChange }: { module: Module; onChange: (data: Module["data"]) => void }) {
+  const boardFv = useCanvasStore((s) =>
+    s.boards.find((b) => b.modules.some((m) => m.id === module.id)) ?? null
+  );
+  const brainstormCanvasLinksFv: BrainstormCanvasLinkSummary[] = useMemo(() => {
+    if (module.type !== "brainstorm" || !boardFv) return [];
+    return boardFv.connections
+      .filter((c) => c.fromModuleId === module.id || c.toModuleId === module.id)
+      .map((c) => {
+        const otherId =
+          c.fromModuleId === module.id ? c.toModuleId : c.fromModuleId;
+        const other = boardFv.modules.find((m) => m.id === otherId);
+        return {
+          connectionId: c.id,
+          otherTitle: connectionPeerTitle(other),
+          label: c.label || "",
+          outgoing: c.fromModuleId === module.id,
+        };
+      });
+  }, [boardFv, module.id, module.type]);
+
   switch (module.type) {
     case "memo": {
       const d = module.data as MemoData;
@@ -638,7 +765,14 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
     }
     case "brainstorm": {
       const d = module.data as BrainstormData;
-      return <BrainstormFullView data={d} onChange={(nd) => onChange(nd)} />;
+      return (
+        <BrainstormModule
+          data={d}
+          isExpanded
+          onChange={(nd) => onChange(nd)}
+          canvasLinkSummaries={brainstormCanvasLinksFv}
+        />
+      );
     }
     case "image": {
       const d = module.data as ImageData;
@@ -746,44 +880,6 @@ function ScheduleFullView({ data, onChange }: { data: ScheduleData; onChange: (d
           placeholder="새 항목 추가..."
           style={{ flex: 1, height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none" }} />
         <button onClick={addItem} style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer", fontSize: 16, fontWeight: 700 }}>+</button>
-      </div>
-    </div>
-  );
-}
-
-// ── 브레인스토밍 전체보기 (일정 전체보기와 동일 패턴, 체크 없음) ─────────────
-function BrainstormFullView({ data, onChange }: { data: BrainstormData; onChange: (d: BrainstormData) => void }) {
-  const [newItemText, setNewItemText] = useState("");
-
-  function deleteItem(id: string) {
-    onChange({ ...data, items: data.items.filter((item) => item.id !== id) });
-  }
-
-  function addItem() {
-    if (!newItemText.trim()) return;
-    onChange({ ...data, items: [...data.items, { id: uuidv4(), text: newItemText.trim() }] });
-    setNewItemText("");
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {data.items.length === 0 && (
-        <p className="text-sm" style={{ color: "var(--text-muted)" }}>아이디어가 없습니다. 아래에서 추가해 보세요.</p>
-      )}
-      {data.items.map((item) => (
-        <div key={item.id} className="flex items-start gap-2 group">
-          <span className="text-sm select-none pt-0.5" style={{ color: "var(--accent)", flexShrink: 0 }}>·</span>
-          <span className="flex-1 text-sm min-w-0" style={{ color: "var(--text-primary)", wordBreak: "break-word" }}>{item.text}</span>
-          <button type="button" onClick={() => deleteItem(item.id)} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 14, padding: "2px 4px", opacity: 0, transition: "opacity 0.15s", flexShrink: 0 }}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0")}>✕</button>
-        </div>
-      ))}
-      <div className="flex gap-1 mt-2">
-        <input type="text" value={newItemText} onChange={(e) => setNewItemText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addItem(); } }}
-          placeholder="아이디어 추가…"
-          style={{ flex: 1, height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none" }} />
-        <button type="button" onClick={addItem} style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer", fontSize: 16, fontWeight: 700 }}>+</button>
       </div>
     </div>
   );

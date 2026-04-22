@@ -1,6 +1,23 @@
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
-import { Board, Module, Connection, Group } from "@/types";
+import type {
+  Board,
+  Module,
+  Connection,
+  Group,
+  BoardCategory,
+  ExpandAdjacentModuleOptions,
+  BrainstormMapType,
+  MemoData,
+  BrainstormData,
+} from "@/types";
+import { buildCanvasMapTemplate } from "@/lib/canvas/mapTemplates";
+import { BRAINSTORM_MAP_OPTIONS } from "@/lib/brainstormMapMeta";
+import { findMapToolDef } from "@/lib/canvas/mapTemplateTools";
+import { moduleColorToConnectionHex } from "@/lib/moduleColorHex";
+import { buildTemplateData } from "@/lib/moduleTemplates";
+import { nextSidebarOrder, normalizeBoardCategory } from "@/lib/boardCategory";
+import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
 import {
   loadAppData,
   loadAppDataForUser,
@@ -8,6 +25,7 @@ import {
   saveAppData,
 } from "@/lib/storage";
 import { createClient } from "@/lib/supabase/client";
+import type { AnchorSide } from "@/lib/canvas/geometry";
 
 interface CanvasStore {
   boards: Board[];
@@ -23,7 +41,11 @@ interface CanvasStore {
   removeBoard(boardId: string): void;
   updateBoard(boardId: string, updates: Partial<Omit<Board, "id">>): void;
   setActiveBoard(boardId: string): void;
-  reorderBoards(fromIndex: number, toIndex: number): void;
+  reorderBoardsInCategory(
+    category: BoardCategory,
+    fromIndex: number,
+    toIndex: number
+  ): void;
 
   // 모듈 CRUD
   addModule(
@@ -37,11 +59,34 @@ interface CanvasStore {
     updates: Partial<Module>
   ): void;
   duplicateModule(boardId: string, moduleId: string): void;
+  /** 메모·브레인스토밍: 방향 화살표로 인접 모듈 생성 + 연결 (한 번에 undo) */
+  expandAdjacentModule(
+    boardId: string,
+    sourceModuleId: string,
+    direction: AnchorSide,
+    options?: ExpandAdjacentModuleOptions
+  ): string | null;
+  /** 맵 템플릿: 여러 모듈 + 연결을 한 번에 추가 (실행취소 1회) */
+  applyMapTemplate(
+    boardId: string,
+    templateId: BrainstormMapType,
+    origin: { x: number; y: number }
+  ): void;
+  /** 맵 템플릿 그룹: 피벗 기준 균일 확대·축소 (실행취소 1회) */
+  scaleMapTemplateGroup(boardId: string, groupId: string, factor: number): void;
+  /** 맵 템플릿 그룹에 템플릿 도구로 모듈 추가 (실행취소 1회) */
+  appendMapToolModule(boardId: string, groupId: string, toolId: string): void;
 
   // 커넥션 CRUD
   addConnection(boardId: string, connection: Omit<Connection, "id">): void;
   removeConnection(boardId: string, connectionId: string): void;
-  updateConnection(boardId: string, connectionId: string, updates: Partial<Pick<Connection, "label" | "style" | "color" | "fromAnchor" | "toAnchor">>): void;
+  updateConnection(
+    boardId: string,
+    connectionId: string,
+    updates: Partial<
+      Pick<Connection, "label" | "style" | "color" | "fromAnchor" | "toAnchor" | "pathStyle">
+    >
+  ): void;
 
   // 그룹 CRUD
   addGroup(boardId: string, group: Omit<Group, "id" | "createdAt" | "updatedAt">): void;
@@ -93,6 +138,28 @@ function getTimestamp(): string {
   return new Date().toISOString();
 }
 
+function bboxOfModules(modules: Module[]): {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+} {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const m of modules) {
+    minX = Math.min(minX, m.position.x);
+    minY = Math.min(minY, m.position.y);
+    maxX = Math.max(maxX, m.position.x + m.size.width);
+    maxY = Math.max(maxY, m.position.y + m.size.height);
+  }
+  if (!Number.isFinite(minX)) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 // ── Supabase 동기화 헬퍼 ─────────────────────────────────────────────────
 
 async function pushBoardToSupabase(
@@ -107,6 +174,8 @@ async function pushBoardToSupabase(
     name: board.name,
     icon: board.icon,
     color: board.color,
+    board_category: board.category ?? "memo_schedule",
+    sidebar_order: board.sidebarOrder ?? 0,
     viewport: board.viewport,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
@@ -167,6 +236,9 @@ async function pushBoardToSupabase(
         is_collapsed: g.isCollapsed,
         created_at: g.createdAt,
         updated_at: g.updatedAt,
+        map_template_id: g.mapTemplateId ?? null,
+        map_pivot: g.mapPivot ?? null,
+        map_scale: g.mapScale ?? null,
       }))
     );
   }
@@ -239,11 +311,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       return;
     }
 
-    // groups 필드 보정
-    const boards = (appData.boards ?? []).map((b) => ({
-      ...b,
-      groups: (b as Board & { groups?: Group[] }).groups ?? [],
-    }));
+    // groups 필드 보정 + 보드 카테고리·순서
+    const raw = appData.boards ?? [];
+    let memoOrd = 0;
+    let thinkOrd = 0;
+    const boards: Board[] = raw.map((b) => {
+      const bb = b as Board & { groups?: Group[] };
+      const category = bb.category ?? "memo_schedule";
+      const sidebarOrder =
+        typeof bb.sidebarOrder === "number"
+          ? bb.sidebarOrder
+          : category === "thinking"
+            ? thinkOrd++
+            : memoOrd++;
+      return {
+        ...bb,
+        groups: bb.groups ?? [],
+        category,
+        sidebarOrder,
+      };
+    });
 
     // 마지막 열었던 보드 복원 (보드가 실제로 존재하는지 확인)
     const savedId = appData.lastOpenedBoardId;
@@ -317,6 +404,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       name: b.name,
       icon: b.icon,
       color: b.color,
+      category:
+        (b as { board_category?: string }).board_category === "thinking"
+          ? "thinking"
+          : "memo_schedule",
+      sidebarOrder:
+        typeof (b as { sidebar_order?: number }).sidebar_order === "number"
+          ? (b as { sidebar_order: number }).sidebar_order
+          : 0,
       viewport: b.viewport as Board["viewport"],
       createdAt: b.created_at,
       updatedAt: b.updated_at,
@@ -327,7 +422,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           type: m.type as Module["type"],
           position: m.position as Module["position"],
           size: m.size as Module["size"],
-          zIndex: m.z_index,
+          zIndex: typeof m.z_index === "number" ? m.z_index : 0,
           color: m.color as Module["color"],
           isExpanded: m.is_expanded,
           isMinimized: m.is_minimized ?? false,
@@ -349,17 +444,35 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         })),
       groups: (groupRows ?? [])
         .filter((g) => g.board_id === b.id)
-        .map((g) => ({
-          id: g.id,
-          name: g.name,
-          moduleIds: g.module_ids as string[],
-          position: g.position as Group["position"],
-          size: g.size as Group["size"],
-          color: g.color as Group["color"],
-          isCollapsed: g.is_collapsed,
-          createdAt: g.created_at,
-          updatedAt: g.updated_at,
-        })),
+        .map((g) => {
+          const row = g as {
+            map_template_id?: string | null;
+            map_pivot?: { x: number; y: number } | null;
+            map_scale?: number | null;
+          };
+          const mt = row.map_template_id;
+          return {
+            id: g.id,
+            name: g.name,
+            moduleIds: g.module_ids as string[],
+            position: g.position as Group["position"],
+            size: g.size as Group["size"],
+            color: g.color as Group["color"],
+            isCollapsed: g.is_collapsed,
+            createdAt: g.created_at,
+            updatedAt: g.updated_at,
+            ...(mt
+              ? {
+                  mapTemplateId: mt as BrainstormMapType,
+                  mapPivot: row.map_pivot ?? undefined,
+                  mapScale:
+                    typeof row.map_scale === "number" && row.map_scale > 0
+                      ? row.map_scale
+                      : undefined,
+                }
+              : {}),
+          } satisfies Group;
+        }),
     }));
 
     // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
@@ -418,12 +531,29 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     debouncedSupabaseSync?.();
   },
 
-  reorderBoards(fromIndex, toIndex) {
+  reorderBoardsInCategory(category, fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
     set((state) => {
-      const boards = [...state.boards];
-      const [moved] = boards.splice(fromIndex, 1);
-      boards.splice(toIndex, 0, moved);
-      return { boards };
+      const catBoards = state.boards
+        .filter((b) => normalizeBoardCategory(b) === category)
+        .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= catBoards.length ||
+        toIndex >= catBoards.length
+      ) {
+        return state;
+      }
+      const arr = [...catBoards];
+      const [moved] = arr.splice(fromIndex, 1);
+      arr.splice(toIndex, 0, moved);
+      const orderMap = new Map(arr.map((b, i) => [b.id, i]));
+      return {
+        boards: state.boards.map((b) =>
+          orderMap.has(b.id) ? { ...b, sidebarOrder: orderMap.get(b.id)! } : b
+        ),
+      };
     });
     debouncedSave?.();
     debouncedSupabaseSync?.();
@@ -431,8 +561,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   addBoard(boardInput) {
     const now = getTimestamp();
+    const category = boardInput.category ?? "memo_schedule";
+    const sidebarOrder =
+      typeof boardInput.sidebarOrder === "number"
+        ? boardInput.sidebarOrder
+        : nextSidebarOrder(get().boards, category);
     const newBoard: Board = {
       ...boardInput,
+      category,
+      sidebarOrder,
       id: uuidv4(),
       createdAt: now,
       updatedAt: now,
@@ -488,6 +625,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   // ─── 모듈 CRUD ─────────────────────────────────────────────────────────
 
   addModule(boardId, moduleInput) {
+    const board = get().boards.find((b) => b.id === boardId);
+    if (board && !isModuleTypeAllowedOnBoard(moduleInput.type, board)) return;
+
     get().pushHistory();
     const now = getTimestamp();
     const newModule: Module = {
@@ -563,10 +703,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
       const source = board.modules.find((m) => m.id === moduleId);
       if (!source) return state;
+      if (!isModuleTypeAllowedOnBoard(source.type, board)) return state;
 
       const now = getTimestamp();
       const maxZIndex = board.modules.reduce(
-        (max, m) => Math.max(max, m.zIndex),
+        (max, m) => Math.max(max, Number(m.zIndex) || 0),
         0
       );
 
@@ -595,6 +736,439 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         ),
       };
     });
+
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
+  expandAdjacentModule(boardId, sourceModuleId, direction, options) {
+    const state = get();
+    const board = state.boards.find((b) => b.id === boardId);
+    const source = board?.modules.find((m) => m.id === sourceModuleId);
+    if (!board || !source) return null;
+    if (source.type !== "memo" && source.type !== "brainstorm") return null;
+
+    get().pushHistory();
+
+    const moduleShape = options?.moduleShape ?? "rounded";
+    const pathStyle = options?.pathStyle ?? "bezier";
+
+    const GAP = 56;
+    const nw = 260;
+    const nh = Math.round(
+      Math.min(480, Math.max(140, source.size.height < 100 ? 200 : source.size.height))
+    );
+
+    const { position: p, size: s } = source;
+    let nx = p.x;
+    let ny = p.y;
+    let fromA: Connection["fromAnchor"];
+    let toA: Connection["toAnchor"];
+
+    switch (direction) {
+      case "right":
+        nx = p.x + s.width + GAP;
+        ny = p.y + (s.height - nh) / 2;
+        fromA = "right";
+        toA = "left";
+        break;
+      case "left":
+        nx = p.x - nw - GAP;
+        ny = p.y + (s.height - nh) / 2;
+        fromA = "left";
+        toA = "right";
+        break;
+      case "bottom":
+        nx = p.x + (s.width - nw) / 2;
+        ny = p.y + s.height + GAP;
+        fromA = "bottom";
+        toA = "top";
+        break;
+      case "top":
+        nx = p.x + (s.width - nw) / 2;
+        ny = p.y - nh - GAP;
+        fromA = "top";
+        toA = "bottom";
+        break;
+    }
+
+    const now = getTimestamp();
+    const newId = uuidv4();
+    const maxZ = board.modules.reduce(
+      (a, m) => Math.max(a, Number(m.zIndex) || 0),
+      0
+    );
+
+    const data =
+      source.type === "memo"
+        ? buildTemplateData("memo", options?.templateId)
+        : buildTemplateData("brainstorm", options?.templateId);
+
+    const newModule: Module = {
+      id: newId,
+      type: source.type,
+      position: { x: Math.round(nx), y: Math.round(ny) },
+      size: { width: nw, height: nh },
+      zIndex: maxZ + 1,
+      color: source.color,
+      shape: moduleShape,
+      isExpanded: false,
+      isMinimized: false,
+      data: data as Module["data"],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const newConnection: Connection = {
+      id: uuidv4(),
+      fromModuleId: sourceModuleId,
+      toModuleId: newId,
+      fromAnchor: fromA,
+      toAnchor: toA,
+      label: "",
+      style: "solid",
+      color: moduleColorToConnectionHex(source.color),
+      pathStyle,
+    };
+
+    const groups = board.groups ?? [];
+    const fromGroup = groups.find((g) => g.moduleIds.includes(sourceModuleId));
+    let pendingGroupInvite: CanvasStore["pendingGroupInvite"] = null;
+    if (fromGroup && !fromGroup.moduleIds.includes(newId)) {
+      pendingGroupInvite = {
+        groupId: fromGroup.id,
+        groupName: fromGroup.name,
+        candidateModuleId: newId,
+        boardId,
+      };
+    }
+
+    set((st) => ({
+      boards: st.boards.map((b) =>
+        b.id === boardId
+          ? {
+              ...b,
+              modules: [...b.modules, newModule],
+              connections: [...b.connections, newConnection],
+              updatedAt: getTimestamp(),
+            }
+          : b
+      ),
+      pendingGroupInvite,
+    }));
+
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+    return newId;
+  },
+
+  applyMapTemplate(boardId, templateId, origin) {
+    const def = buildCanvasMapTemplate(templateId);
+    if (!def.cells.length) return;
+
+    const boardPre = get().boards.find((b) => b.id === boardId);
+    if (!boardPre || normalizeBoardCategory(boardPre) !== "thinking") return;
+
+    get().pushHistory();
+    const board = get().boards.find((b) => b.id === boardId);
+    if (!board) return;
+
+    const now = getTimestamp();
+    const maxZ = board.modules.reduce(
+      (a, m) => Math.max(a, Number(m.zIndex) || 0),
+      0
+    );
+
+    const ids: string[] = [];
+    const newModules: Module[] = def.cells.map((cell, i) => {
+      const id = uuidv4();
+      ids.push(id);
+      const data =
+        cell.type === "memo"
+          ? ({
+              title: cell.memoTitle ?? "메모",
+              content: cell.memoContent ?? "",
+              previewLines: 2,
+            } satisfies MemoData)
+          : ({
+              title: cell.brainTitle ?? "브레인스토밍",
+              items: [],
+              previewCount: 4,
+              itemLinks: [],
+            } satisfies BrainstormData);
+
+      const mod: Module = {
+        id,
+        type: cell.type,
+        position: {
+          x: Math.round(origin.x + cell.relX),
+          y: Math.round(origin.y + cell.relY),
+        },
+        size: { width: cell.width, height: cell.height },
+        zIndex: maxZ + 1 + i,
+        color: cell.color,
+        isExpanded: cell.isExpanded ?? cell.type === "brainstorm",
+        isMinimized: false,
+        data,
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (cell.shape) mod.shape = cell.shape;
+      return mod;
+    });
+
+    const newConnections: Connection[] = def.connections.map((c) => {
+      const fromMod = newModules[c.from];
+      return {
+        id: uuidv4(),
+        fromModuleId: ids[c.from]!,
+        toModuleId: ids[c.to]!,
+        fromAnchor: c.fromAnchor,
+        toAnchor: c.toAnchor,
+        label: c.label ?? "",
+        style: "solid",
+        color: fromMod
+          ? moduleColorToConnectionHex(fromMod.color)
+          : "#94a3b8",
+        pathStyle: c.pathStyle,
+      };
+    });
+
+    const bb = bboxOfModules(newModules);
+    const pivot = {
+      x: (bb.minX + bb.maxX) / 2,
+      y: (bb.minY + bb.maxY) / 2,
+    };
+    const PAD = 20;
+    const groupLabel =
+      BRAINSTORM_MAP_OPTIONS.find((o) => o.id === templateId)?.label ?? templateId;
+    const groupId = uuidv4();
+    const newGroup: Group = {
+      id: groupId,
+      name: groupLabel,
+      moduleIds: ids,
+      position: {
+        x: Math.round(bb.minX - PAD),
+        y: Math.round(bb.minY - PAD),
+      },
+      size: {
+        width: Math.round(bb.maxX - bb.minX + PAD * 2),
+        height: Math.round(bb.maxY - bb.minY + PAD * 2),
+      },
+      color: "teal",
+      isCollapsed: false,
+      createdAt: now,
+      updatedAt: now,
+      mapTemplateId: templateId,
+      mapPivot: pivot,
+      mapScale: 1,
+    };
+
+    set((st) => ({
+      boards: st.boards.map((b) =>
+        b.id === boardId
+          ? {
+              ...b,
+              modules: [...b.modules, ...newModules],
+              connections: [...b.connections, ...newConnections],
+              groups: [...(b.groups ?? []), newGroup],
+              updatedAt: getTimestamp(),
+            }
+          : b
+      ),
+      pendingGroupInvite: null,
+    }));
+
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
+  scaleMapTemplateGroup(boardId, groupId, factor) {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+
+    const board = get().boards.find((b) => b.id === boardId);
+    if (!board || normalizeBoardCategory(board) !== "thinking") return;
+    const g = board?.groups?.find((x) => x.id === groupId);
+    if (!g?.mapTemplateId || g.mapPivot == null) return;
+
+    const pivot = g.mapPivot;
+    const members = g.moduleIds
+      .map((id) => board.modules.find((m) => m.id === id))
+      .filter((m): m is Module => Boolean(m));
+    if (members.length === 0) return;
+
+    get().pushHistory();
+    const ts = getTimestamp();
+
+    const moduleUpdates = new Map<
+      string,
+      { position: { x: number; y: number }; size: { width: number; height: number } }
+    >();
+
+    for (const m of members) {
+      const cx = m.position.x + m.size.width / 2;
+      const cy = m.position.y + m.size.height / 2;
+      const ncx = pivot.x + (cx - pivot.x) * factor;
+      const ncy = pivot.y + (cy - pivot.y) * factor;
+      const nw = Math.max(72, Math.round(m.size.width * factor));
+      const nh = Math.max(48, Math.round(m.size.height * factor));
+      moduleUpdates.set(m.id, {
+        position: { x: Math.round(ncx - nw / 2), y: Math.round(ncy - nh / 2) },
+        size: { width: nw, height: nh },
+      });
+    }
+
+    const nextScale = Math.round((g.mapScale ?? 1) * factor * 1000) / 1000;
+
+    set((st) => ({
+      boards: st.boards.map((b) => {
+        if (b.id !== boardId) return b;
+        const modules = b.modules.map((m) => {
+          const u = moduleUpdates.get(m.id);
+          return u ? { ...m, ...u, updatedAt: ts } : m;
+        });
+        const groups = (b.groups ?? []).map((gr) => {
+          if (gr.id !== groupId) return gr;
+          const subs = gr.moduleIds
+            .map((id) => modules.find((m) => m.id === id))
+            .filter((m): m is Module => Boolean(m));
+          const box = bboxOfModules(subs);
+          const PAD = 20;
+          return {
+            ...gr,
+            position: {
+              x: Math.round(box.minX - PAD),
+              y: Math.round(box.minY - PAD),
+            },
+            size: {
+              width: Math.round(box.maxX - box.minX + PAD * 2),
+              height: Math.round(box.maxY - box.minY + PAD * 2),
+            },
+            mapScale: nextScale,
+            updatedAt: ts,
+          };
+        });
+        return { ...b, modules, groups, updatedAt: ts };
+      }),
+    }));
+
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
+  appendMapToolModule(boardId, groupId, toolId) {
+    const board = get().boards.find((b) => b.id === boardId);
+    if (!board || normalizeBoardCategory(board) !== "thinking") return;
+    const g = board?.groups?.find((x) => x.id === groupId);
+    if (!g?.mapTemplateId) return;
+
+    const tool = findMapToolDef(g.mapTemplateId, toolId);
+    if (!tool) return;
+
+    get().pushHistory();
+    const now = getTimestamp();
+    const members = g.moduleIds
+      .map((id) => board.modules.find((m) => m.id === id))
+      .filter((m): m is Module => Boolean(m));
+    if (members.length === 0) return;
+
+    const bb = bboxOfModules(members);
+    const gap = 16;
+    const maxZ = board.modules.reduce((a, m) => Math.max(a, Number(m.zIndex) || 0), 0);
+
+    const newId = uuidv4();
+    let newModule: Module;
+
+    if (tool.kind === "memo") {
+      newModule = {
+        id: newId,
+        type: "memo",
+        position: { x: Math.round(bb.minX), y: Math.round(bb.maxY + gap) },
+        size: { width: 240, height: 140 },
+        zIndex: maxZ + 1,
+        color: "default",
+        shape: "rounded",
+        isExpanded: false,
+        isMinimized: false,
+        data: {
+          title: "메모",
+          content: "",
+          previewLines: 2,
+        } satisfies MemoData,
+        createdAt: now,
+        updatedAt: now,
+      };
+    } else if (tool.kind === "brainstorm") {
+      newModule = {
+        id: newId,
+        type: "brainstorm",
+        position: { x: Math.round(bb.minX), y: Math.round(bb.maxY + gap) },
+        size: { width: 280, height: 200 },
+        zIndex: maxZ + 1,
+        color: "blue",
+        shape: "rounded",
+        isExpanded: true,
+        isMinimized: false,
+        data: {
+          title: "브레인스토밍",
+          items: [],
+          previewCount: 4,
+          itemLinks: [],
+        } satisfies BrainstormData,
+        createdAt: now,
+        updatedAt: now,
+      };
+    } else {
+      const laneW = Math.max(360, bb.maxX - bb.minX);
+      newModule = {
+        id: newId,
+        type: "memo",
+        position: { x: Math.round(bb.minX), y: Math.round(bb.maxY + gap) },
+        size: { width: laneW, height: 96 },
+        zIndex: maxZ + 1,
+        color: "teal",
+        shape: "rounded",
+        isExpanded: false,
+        isMinimized: false,
+        data: {
+          title: "새 레인",
+          content: "",
+          previewLines: 2,
+        } satisfies MemoData,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    set((st) => ({
+      boards: st.boards.map((b) => {
+        if (b.id !== boardId) return b;
+        const modules = [...b.modules, newModule];
+        const groups = (b.groups ?? []).map((gr) => {
+          if (gr.id !== groupId) return gr;
+          const nextIds = [...gr.moduleIds, newId];
+          const subs = nextIds
+            .map((id) => modules.find((m) => m.id === id))
+            .filter((m): m is Module => Boolean(m));
+          const box = bboxOfModules(subs);
+          const PAD = 20;
+          return {
+            ...gr,
+            moduleIds: nextIds,
+            position: {
+              x: Math.round(box.minX - PAD),
+              y: Math.round(box.minY - PAD),
+            },
+            size: {
+              width: Math.round(box.maxX - box.minX + PAD * 2),
+              height: Math.round(box.maxY - box.minY + PAD * 2),
+            },
+            updatedAt: now,
+          };
+        });
+        return { ...b, modules, groups, updatedAt: now };
+      }),
+    }));
 
     debouncedSave?.();
     debouncedSupabaseSync?.();

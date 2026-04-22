@@ -1,17 +1,23 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { usePinchZoom } from "@/hooks/usePinchZoom";
 import { screenToCanvas } from "@/lib/canvas/geometry";
+import { getCanvasMapTemplateSize } from "@/lib/canvas/mapTemplates";
 import { computeMemoLikeLayout } from "@/lib/canvas/memoGridLayout";
-import type { ModuleType, GroupColor } from "@/types";
+import { computeMindMapLayeredLayout } from "@/lib/canvas/mindMapLayout";
+import { normalizeBoardCategory } from "@/lib/boardCategory";
+import { visibleModuleIdsForCanvas } from "@/lib/boardModulePolicy";
+import type { Module, ModuleType, GroupColor, BrainstormMapType } from "@/types";
 import CanvasGrid from "./CanvasGrid";
 import ConnectionLayer from "./ConnectionLayer";
 import ConnectionPreview from "./ConnectionPreview";
 import GroupLayer from "./GroupLayer";
 import ZoomControls from "./ZoomControls";
+import MapTemplateDialog from "./MapTemplateDialog";
+import MapTemplateWorkspaceChrome from "./MapTemplateWorkspaceChrome";
 import ModuleCardWrapper from "@/components/modules/ModuleCardWrapper";
 
 interface CanvasProps {
@@ -211,12 +217,16 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const pushHistory = useCanvasStore((s) => s.pushHistory);
   const pendingGroupInvite = useCanvasStore((s) => s.pendingGroupInvite);
   const clearGroupInvite = useCanvasStore((s) => s.clearGroupInvite);
+  const applyMapTemplate = useCanvasStore((s) => s.applyMapTemplate);
+  const scaleMapTemplateGroup = useCanvasStore((s) => s.scaleMapTemplateGroup);
+  const appendMapToolModule = useCanvasStore((s) => s.appendMapToolModule);
   const cancelConnecting = useConnectionStore((s) => s.cancelConnecting);
   const updatePreviewPos = useConnectionStore((s) => s.updatePreviewPos);
   const connectionMode = useConnectionStore((s) => s.mode);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
+  const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
 
   // 뷰포트
   const [viewport, setViewport] = useState(() =>
@@ -575,7 +585,11 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         e.clientY - rect.top,
         viewport
       );
-      onAddModule("memo", { x: pos.x - 130, y: pos.y - 22 });
+      const quickType =
+        board && normalizeBoardCategory(board) === "thinking"
+          ? "brainstorm"
+          : "memo";
+      onAddModule(quickType, { x: pos.x - 130, y: pos.y - 22 });
     }
   }
 
@@ -637,7 +651,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     updateViewport(boardId, vp);
   }
 
-  // ── 자동 정렬 (⊞): 메모형 배치만 적용 (평소에는 드래그로 자유 이동) ───────
+  // ── 자동 정렬 (⊞): 메모·일정 모듈만 위치 정렬 (평소에는 드래그로 자유 이동) ──
   function handleAutoLayout() {
     if (!board) return;
 
@@ -672,32 +686,123 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     next.forEach((pos, id) => {
       updateModule(boardId, id, { position: pos });
     });
+  }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    allModules.forEach((m) => {
-      if (collapsedGroupModuleIds.has(m.id)) return;
-      const pos = next.get(m.id) ?? m.position;
-      minX = Math.min(minX, pos.x);
-      minY = Math.min(minY, pos.y);
-      maxX = Math.max(maxX, pos.x + m.size.width);
-      maxY = Math.max(maxY, pos.y + m.size.height);
+  /** 연결된 메모·브레인스토밍을 루트(가장 왼쪽) 기준 층 배치 — 생각정리 보드만 */
+  function handleMindMapAutoLayout() {
+    if (!board || normalizeBoardCategory(board) !== "thinking") return;
+
+    const collapsedGroupModuleIds = new Set(
+      (board.groups ?? [])
+        .filter((g) => g.isCollapsed)
+        .flatMap((g) => g.moduleIds)
+    );
+    const groupedIds = new Set((board.groups ?? []).flatMap((g) => g.moduleIds));
+
+    const next = computeMindMapLayeredLayout({
+      modules: board.modules,
+      connections: board.connections ?? [],
+      collapsedModuleIds: collapsedGroupModuleIds,
+      groupedModuleIds: groupedIds,
     });
-    if (!Number.isFinite(minX)) return;
+
+    if (next.size === 0) return;
+
+    pushHistory();
+    next.forEach((pos, id) => {
+      updateModule(boardId, id, {
+        position: { x: Math.round(pos.x), y: Math.round(pos.y) },
+      });
+    });
+  }
+
+  /** 맵 템플릿: 여러 모듈·연결을 화면 중심 캔버스 좌표에 삽입 */
+  function handleApplyMapTemplate(templateId: BrainstormMapType) {
+    if (!board) return;
+    const { width, height } = getCanvasMapTemplateSize(templateId);
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const c = screenToCanvas(cx, cy, viewport);
+    applyMapTemplate(boardId, templateId, {
+      x: c.x - width / 2,
+      y: c.y - height / 2,
+    });
+    setMapTemplateDialogOpen(false);
+  }
+
+  /** 현재 뷰포트(화면)과 겹치는 모듈만 기준으로 줌·팬을 맞춤. 없으면 전체 보기와 동일 */
+  function handleFitToView() {
+    if (!board) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+    if (W <= 0 || H <= 0) return;
+
+    const collapsedGroupModuleIds = new Set(
+      (board.groups ?? [])
+        .filter((g) => g.isCollapsed)
+        .flatMap((g) => g.moduleIds)
+    );
+
+    const { x: vx, y: vy, zoom } = viewport;
+    const viewLeft = -vx / zoom;
+    const viewTop = -vy / zoom;
+    const viewW = W / zoom;
+    const viewH = H / zoom;
+    const viewRight = viewLeft + viewW;
+    const viewBottom = viewTop + viewH;
+
+    function moduleH(m: Module) {
+      return m.isExpanded ? m.size.height : 68;
+    }
+
+    const inView = board.modules.filter((m) => {
+      if (collapsedGroupModuleIds.has(m.id)) return false;
+      const mh = moduleH(m);
+      const mx2 = m.position.x + m.size.width;
+      const my2 = m.position.y + mh;
+      return (
+        m.position.x < viewRight &&
+        mx2 > viewLeft &&
+        m.position.y < viewBottom &&
+        my2 > viewTop
+      );
+    });
+
+    const target = inView.length > 0
+      ? inView
+      : board.modules.filter((m) => !collapsedGroupModuleIds.has(m.id));
+
+    if (target.length === 0) {
+      const vp = { x: 0, y: 0, zoom: 1 };
+      setViewport(vp);
+      updateViewport(boardId, vp);
+      return;
+    }
+
+    const PADDING = 80;
+    const minX = Math.min(...target.map((m) => m.position.x));
+    const minY = Math.min(...target.map((m) => m.position.y));
+    const maxX = Math.max(...target.map((m) => m.position.x + m.size.width));
+    const maxY = Math.max(...target.map((m) => m.position.y + moduleH(m)));
 
     const contentW = maxX - minX;
     const contentH = maxY - minY;
     if (contentW <= 0 || contentH <= 0) return;
 
-    const W = container?.clientWidth ?? 0;
-    const H = container?.clientHeight ?? 0;
-    if (W <= 0 || H <= 0) return;
+    const newZoom = Math.min(
+      MAX_ZOOM,
+      Math.max(
+        MIN_ZOOM,
+        Math.min((W - PADDING * 2) / contentW, (H - PADDING * 2) / contentH) * 0.92
+      )
+    );
 
-    const PADDING = 80;
-    const fitZoom = Math.min((W - PADDING * 2) / contentW, (H - PADDING * 2) / contentH) * 0.88;
-    const newZoom = Math.max(0.25, Math.min(fitZoom, 1.0));
     const vpX = (W - contentW * newZoom) / 2 - minX * newZoom;
     const vpY = (H - contentH * newZoom) / 2 - minY * newZoom;
     const vp = { x: vpX, y: vpY, zoom: newZoom };
@@ -706,6 +811,30 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   }
 
   if (!board) return null;
+
+  const isThinkingBoard = normalizeBoardCategory(board) === "thinking";
+
+  const visibleMemoScheduleIds = useMemo(
+    () => visibleModuleIdsForCanvas(board),
+    [board]
+  );
+
+  const modulesForCanvas = useMemo(() => {
+    if (!visibleMemoScheduleIds) return board.modules;
+    return board.modules.filter((m) => visibleMemoScheduleIds.has(m.id));
+  }, [board, visibleMemoScheduleIds]);
+
+  const activeMapContext = useMemo(() => {
+    if (lassoMode) return null;
+    const primaryId =
+      selectedMultiIds.length > 0 ? selectedMultiIds[0] : selectedModuleId;
+    if (!primaryId) return null;
+    const grp = (board.groups ?? []).find(
+      (g) => g.mapTemplateId && g.moduleIds.includes(primaryId)
+    );
+    if (!grp?.mapTemplateId) return null;
+    return { group: grp, templateId: grp.mapTemplateId };
+  }, [board, lassoMode, selectedModuleId, selectedMultiIds]);
 
   // 접힌 그룹에 속한 모듈 ID 목록 (렌더링 제외)
   const collapsedModuleIds = new Set(
@@ -734,7 +863,11 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
       <CanvasGrid viewport={viewport} />
 
       {/* 연결선 SVG — 컨테이너 전체 커버 */}
-      <ConnectionLayer boardId={boardId} viewport={viewport} />
+      <ConnectionLayer
+        boardId={boardId}
+        viewport={viewport}
+        visibleModuleIds={visibleMemoScheduleIds}
+      />
       <ConnectionPreview boardId={boardId} viewport={viewport} />
 
       {/* 라소 선택 영역 표시 */}
@@ -795,9 +928,10 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
             position: "absolute",
             top: 0, left: 0, right: 0,
             // ZoomControls(zIndex:80)보다 낮게 → 툴바는 항상 위에 표시/클릭 가능
-            // 하단 120px은 ZoomControls 영역으로 비워둠
-            bottom: 120,
-            zIndex: 60,
+            // data-canvas-bg(zIndex:65)보다 위 → 라소가 모듈보다 먼저 포인터를 받음
+            // 하단은 ZoomControls(줌 행 + Fit to View 행) 영역으로 비워둠
+            bottom: 170,
+            zIndex: 74,
             cursor: "crosshair",
             touchAction: "none",
           }}
@@ -815,6 +949,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
           position: "absolute",
           top: 0,
           left: 0,
+          zIndex: 65,
           transformOrigin: "0 0",
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
           willChange: "transform",
@@ -829,7 +964,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
               left: -50000,
               width: 100000,
               height: 100000,
-              zIndex: 0,
+              zIndex: -1,
               touchAction: "none",
             }}
             onPointerDown={handleSelectionPointerDown}
@@ -847,7 +982,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         <GroupLayer boardId={boardId} viewport={viewport} />
 
         {/* 모듈 — 접힌 그룹에 속한 것은 숨김 */}
-        {board.modules
+        {modulesForCanvas
           .filter((m) => !collapsedModuleIds.has(m.id))
           .map((module) => (
             <ModuleCardWrapper
@@ -872,11 +1007,39 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onFit={handleFit}
+        onFitToView={handleFitToView}
         onAutoLayout={handleAutoLayout}
+        onMindMapLayout={isThinkingBoard ? handleMindMapAutoLayout : undefined}
+        onMapTemplates={
+          isThinkingBoard ? () => setMapTemplateDialogOpen(true) : undefined
+        }
         isConnecting={connectionMode === "connecting"}
         isGroupMode={lassoMode}
         onGroupMode={handleEnterGroupMode}
       />
+
+      <MapTemplateDialog
+        open={mapTemplateDialogOpen}
+        onClose={() => setMapTemplateDialogOpen(false)}
+        onApply={handleApplyMapTemplate}
+      />
+
+      {activeMapContext && (
+        <MapTemplateWorkspaceChrome
+          templateId={activeMapContext.templateId}
+          groupName={activeMapContext.group.name}
+          mapScale={activeMapContext.group.mapScale ?? 1}
+          onScaleIn={() =>
+            scaleMapTemplateGroup(boardId, activeMapContext.group.id, 1.1)
+          }
+          onScaleOut={() =>
+            scaleMapTemplateGroup(boardId, activeMapContext.group.id, 1 / 1.1)
+          }
+          onTool={(toolId) =>
+            appendMapToolModule(boardId, activeMapContext.group.id, toolId)
+          }
+        />
+      )}
 
       {/* 라소 모드 힌트 배너 */}
       {lassoMode && (

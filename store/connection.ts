@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { Connection } from "@/types";
+import type { Connection } from "@/types";
 import { useCanvasStore } from "./canvas";
+import { moduleColorToConnectionHex } from "@/lib/moduleColorHex";
 
 interface ConnectionStore {
   mode: "idle" | "connecting";
@@ -50,6 +51,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
     const activeBoardId = useCanvasStore.getState().activeBoardId;
     if (activeBoardId) {
+      const board = useCanvasStore
+        .getState()
+        .boards.find((b) => b.id === activeBoardId);
+      const fromMod = board?.modules.find((m) => m.id === fromModuleId);
+      const strokeColor = fromMod
+        ? moduleColorToConnectionHex(fromMod.color)
+        : "#94a3b8";
       useCanvasStore.getState().addConnection(activeBoardId, {
         fromModuleId,
         toModuleId,
@@ -57,7 +65,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         toAnchor,
         label: "",
         style: "solid",
-        color: "#94a3b8",
+        color: strokeColor,
+        pathStyle: "bezier",
       });
     }
 

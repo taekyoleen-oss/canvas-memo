@@ -1,14 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { Board } from "@/types";
+import { useMemo, useRef, useState } from "react";
+import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
+import {
+  localIndexInCategory,
+  normalizeBoardCategory,
+  sortBoardsForSidebar,
+} from "@/lib/boardCategory";
 
 interface BottomTabBarProps {
   boards: Board[];
   activeBoardId: string | null;
   onSelect: (id: string) => void;
-  onAdd: () => void;
+  onAdd: (category: BoardCategory) => void;
 }
 
 export default function BottomTabBar({
@@ -17,11 +22,12 @@ export default function BottomTabBar({
   onSelect,
   onAdd,
 }: BottomTabBarProps) {
-  const reorderBoards = useCanvasStore((s) => s.reorderBoards);
+  const reorderBoardsInCategory = useCanvasStore((s) => s.reorderBoardsInCategory);
+  const sorted = useMemo(() => sortBoardsForSidebar(boards), [boards]);
+
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const dragIndexRef = useRef<number | null>(null);
 
-  // 터치 드래그용 상태
   const touchStartXRef = useRef<number>(0);
   const touchDragIndexRef = useRef<number | null>(null);
   const [touchDragging, setTouchDragging] = useState(false);
@@ -38,6 +44,18 @@ export default function BottomTabBar({
     return null;
   }
 
+  function applyReorder(from: number, to: number) {
+    if (from === to) return;
+    const catA = normalizeBoardCategory(sorted[from]);
+    const catB = normalizeBoardCategory(sorted[to]);
+    if (catA !== catB) return;
+    reorderBoardsInCategory(
+      catA,
+      localIndexInCategory(sorted, from),
+      localIndexInCategory(sorted, to)
+    );
+  }
+
   return (
     <nav
       className="flex items-center md:hidden flex-shrink-0 w-full"
@@ -51,14 +69,15 @@ export default function BottomTabBar({
       }}
     >
       <div className="flex items-center gap-1 px-2 min-w-0 flex-1">
-        {boards.map((board, index) => {
+        {sorted.map((board, index) => {
           const isActive = board.id === activeBoardId;
           const isDragOver = dragOverIndex === index || touchDragOver === index;
           return (
             <button
               key={board.id}
-              ref={(el) => { tabRefs.current[index] = el; }}
-              // HTML5 drag (desktop fallback)
+              ref={(el) => {
+                tabRefs.current[index] = el;
+              }}
               draggable
               onDragStart={(e) => {
                 dragIndexRef.current = index;
@@ -73,12 +92,16 @@ export default function BottomTabBar({
               onDrop={(e) => {
                 e.preventDefault();
                 const from = dragIndexRef.current;
-                if (from !== null && from !== index) reorderBoards(from, index);
+                if (from !== null && from !== index) {
+                  applyReorder(from, index);
+                }
                 dragIndexRef.current = null;
                 setDragOverIndex(null);
               }}
-              onDragEnd={() => { dragIndexRef.current = null; setDragOverIndex(null); }}
-              // 터치 드래그
+              onDragEnd={() => {
+                dragIndexRef.current = null;
+                setDragOverIndex(null);
+              }}
               onTouchStart={(e) => {
                 touchStartXRef.current = e.touches[0].clientX;
                 touchDragIndexRef.current = index;
@@ -97,7 +120,7 @@ export default function BottomTabBar({
                   const over = getIndexFromTouchX(e.changedTouches[0].clientX);
                   const from = touchDragIndexRef.current;
                   if (from !== null && over !== null && from !== over) {
-                    reorderBoards(from, over);
+                    applyReorder(from, over);
                   }
                   setTouchDragging(false);
                   setTouchDragOver(null);
@@ -117,8 +140,8 @@ export default function BottomTabBar({
                 border: isDragOver
                   ? "2px solid var(--primary)"
                   : isActive
-                  ? "1px solid var(--primary)"
-                  : "1px solid transparent",
+                    ? "1px solid var(--primary)"
+                    : "1px solid transparent",
                 cursor: touchDragging ? "grabbing" : "pointer",
                 transition: "all 150ms",
                 opacity: touchDragIndexRef.current === index && touchDragging ? 0.5 : 1,
@@ -141,9 +164,9 @@ export default function BottomTabBar({
         })}
       </div>
 
-      {/* 보드 추가 버튼 */}
       <button
-        onClick={onAdd}
+        type="button"
+        onClick={() => onAdd("memo_schedule")}
         className="flex items-center justify-center rounded-full flex-shrink-0 mx-2"
         style={{
           width: 44,
@@ -156,6 +179,7 @@ export default function BottomTabBar({
           fontWeight: "bold",
         }}
         aria-label="보드 추가"
+        title="메모·일정 보드 추가 (생각정리는 메뉴에서)"
       >
         +
       </button>
