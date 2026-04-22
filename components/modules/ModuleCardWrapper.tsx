@@ -9,6 +9,7 @@ import type {
   ImageData,
   LinkData,
   FileData,
+  TableData,
   BrainstormData,
   ExpandAdjacentModuleOptions,
 } from "@/types";
@@ -26,6 +27,7 @@ import FileModule from "./FileModule";
 import BrainstormModule, {
   type BrainstormCanvasLinkSummary,
 } from "./BrainstormModule";
+import TableModule from "./TableModule";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
 import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
@@ -74,6 +76,7 @@ function connectionPeerTitle(other: Module | undefined): string {
   if (other.type === "memo") return "메모";
   if (other.type === "brainstorm") return "브레인스토밍";
   if (other.type === "schedule") return "일정";
+  if (other.type === "table") return (other.data as TableData).title?.trim() || "표";
   return other.type;
 }
 
@@ -440,6 +443,14 @@ export default function ModuleCardWrapper({
       case "image": return <ImageModule data={module.data as ImageData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "link": return <LinkModule data={module.data as LinkData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "file": return <FileModule data={module.data as FileData} moduleId={module.id} isExpanded={module.isExpanded} onChange={handleDataChange} />;
+      case "table":
+        return (
+          <TableModule
+            data={module.data as TableData}
+            isExpanded={module.isExpanded}
+            onChange={handleDataChange}
+          />
+        );
       case "brainstorm":
         return (
           <BrainstormModule
@@ -772,6 +783,12 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
           onChange={(nd) => onChange(nd)}
           canvasLinkSummaries={brainstormCanvasLinksFv}
         />
+      );
+    }
+    case "table": {
+      const d = module.data as TableData;
+      return (
+        <TableModule data={d} isExpanded onChange={(nd) => onChange(nd)} />
       );
     }
     case "image": {

@@ -29,7 +29,7 @@ create table if not exists modules (
   id          uuid primary key default gen_random_uuid(),
   board_id    uuid not null references boards(id) on delete cascade,
   user_id     uuid not null references auth.users(id) on delete cascade,
-  type        text not null check (type in ('memo','schedule','image','link','file','brainstorm')),
+  type        text not null check (type in ('memo','schedule','image','link','file','table','brainstorm')),
   position    jsonb not null default '{"x":100,"y":100}',
   size        jsonb not null default '{"width":240,"height":120}',
   z_index     int  not null default 1,

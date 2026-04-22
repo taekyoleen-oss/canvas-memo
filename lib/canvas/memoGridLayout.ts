@@ -1,4 +1,4 @@
-import type { Connection, Module } from "@/types";
+import type { Connection, Module, ModuleType } from "@/types";
 
 const GRID_MARGIN = 20;
 const GAP_X = 14;
@@ -24,8 +24,19 @@ export interface MemoGridLayoutInput {
 
 type LayoutDir = "right" | "left" | "down" | "up" | "fallback";
 
-function isMemoOrSchedule(m: Module): boolean {
-  return m.type === "memo" || m.type === "schedule";
+/** ⊞ 메모형 자동 정렬에 포함할 모듈 타입(모든 캔버스·카테고리 공통) */
+const MEMO_AUTO_LAYOUT_MODULE_TYPES = new Set<ModuleType>([
+  "memo",
+  "schedule",
+  "image",
+  "link",
+  "file",
+  "table",
+  "brainstorm",
+]);
+
+function isMemoAutoLayoutParticipant(m: Module): boolean {
+  return MEMO_AUTO_LAYOUT_MODULE_TYPES.has(m.type);
 }
 
 function findConnection(
@@ -155,7 +166,7 @@ function placeTwoChildrenFan(
 }
 
 /**
- * 메모·일정만 대상.
+ * 캔버스에 올라온 모든 카드형 모듈 타입을 대상(그룹·접힘 제외).
  * 1) 미연결: 별첨처럼 상단 한 줄, 가로 간격 유지(넓이가 들어가면 가운데 정렬).
  * 2) 연결 덩어리: 그 아래에 배치. 부모–자식 연결 앵커 방향별로 동서남북 배치.
  *    같은 방향 자식이 2개면 부모 앵커에서 갈라지는 부채꼴(대각 분산), 3개 이상이면 해당 축으로 일렬.
@@ -170,7 +181,7 @@ export function computeMemoLikeLayout(
 
   const visible = modules.filter((m) => !collapsedModuleIds.has(m.id));
   const eligible = visible.filter(
-    (m) => !groupedModuleIds.has(m.id) && isMemoOrSchedule(m)
+    (m) => !groupedModuleIds.has(m.id) && isMemoAutoLayoutParticipant(m)
   );
   const eligibleIds = new Set(eligible.map((m) => m.id));
   const byId = new Map(eligible.map((m) => [m.id, m]));

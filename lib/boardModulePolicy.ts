@@ -1,12 +1,14 @@
 import type { Board, BoardCategory, ModuleType } from "@/types";
 import { normalizeBoardCategory } from "@/lib/boardCategory";
 
-/** 메모·일정 보드에서 추가·표시 가능한 모듈 타입 (이미지·브레인스톰은 생각정리 보드 전용) */
+/** 메모·일정 보드에서 추가·표시 가능한 모듈 타입 (브레인스톰만 생각정리 전용) */
 export const MEMO_SCHEDULE_MODULE_TYPES: readonly ModuleType[] = [
   "memo",
   "schedule",
+  "image",
   "link",
   "file",
+  "table",
 ];
 
 const MEMO_SCHEDULE_ALLOWED = new Set<ModuleType>(MEMO_SCHEDULE_MODULE_TYPES);

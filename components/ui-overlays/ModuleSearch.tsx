@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useCanvasStore } from "@/store/canvas";
-import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData, BrainstormData } from "@/types";
+import type {
+  Module,
+  MemoData,
+  ScheduleData,
+  ImageData,
+  LinkData,
+  FileData,
+  TableData,
+  BrainstormData,
+} from "@/types";
 
 interface ModuleSearchProps {
   isOpen: boolean;
@@ -35,6 +44,13 @@ function getModuleText(module: Module): string {
     case "file":
       parts.push((d as FileData).fileName ?? "");
       break;
+    case "table":
+      parts.push(
+        ...(d as TableData).cells ?? [],
+        `${(d as TableData).rowCount}행`,
+        `${(d as TableData).colCount}열`
+      );
+      break;
   }
 
   return parts.filter(Boolean).join(" ").toLowerCase();
@@ -48,6 +64,7 @@ function getModuleTypeLabel(type: Module["type"]): string {
     image: "🖼",
     link: "🔗",
     file: "📎",
+    table: "▦",
   };
   return map[type] ?? "📋";
 }
@@ -80,6 +97,10 @@ function getModuleSubtitle(module: Module): string {
     return f.fileType ? `${f.fileType} · ${f.fileSize ? Math.round(f.fileSize / 1024) + " KB" : ""}` : "";
   }
   if (module.type === "image") return (d as ImageData).caption ?? "";
+  if (module.type === "table") {
+    const t = d as TableData;
+    return `${t.rowCount}×${t.colCount} 표`;
+  }
   return "";
 }
 

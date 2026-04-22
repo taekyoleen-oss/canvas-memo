@@ -308,6 +308,13 @@ export default function Home() {
         ? { title: "이미지", src: "", caption: "" }
         : type === "link"
         ? { url: "", title: "링크", description: "", favicon: "", thumbnail: "" }
+        : type === "table"
+        ? {
+            title: "표",
+            rowCount: 3,
+            colCount: 3,
+            cells: Array(9).fill(""),
+          }
         : { title: "파일", fileName: "", fileType: "", fileSize: 0, src: "" };
     const pos = position ?? {
       x: 80 + Math.random() * 200,
@@ -316,10 +323,14 @@ export default function Home() {
     const boardForZ = boards.find((b) => b.id === activeBoardId);
     const maxZIndex =
       boardForZ?.modules.reduce((max, m) => Math.max(max, Number(m.zIndex) || 0), 0) ?? 0;
+    const defaultSize =
+      type === "table"
+        ? { width: 360, height: 280 }
+        : { width: 260, height: 200 };
     addModule(activeBoardId, {
       type,
       position: pos,
-      size: { width: 260, height: 200 },
+      size: defaultSize,
       zIndex: maxZIndex + 1,
       color: "default",
       isExpanded: false,

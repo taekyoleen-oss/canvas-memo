@@ -651,7 +651,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     updateViewport(boardId, vp);
   }
 
-  // ── 자동 정렬 (⊞): 메모·일정 모듈만 위치 정렬 (평소에는 드래그로 자유 이동) ──
+  // ── 자동 정렬 (⊞): 카드형 모듈 전부 대상, 연결 그래프·미연결 규칙 적용 ──
   function handleAutoLayout() {
     if (!board) return;
 

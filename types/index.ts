@@ -27,7 +27,14 @@ export interface Board {
   viewport: { x: number; y: number; zoom: number };
 }
 
-export type ModuleType = "memo" | "schedule" | "image" | "link" | "file" | "brainstorm";
+export type ModuleType =
+  | "memo"
+  | "schedule"
+  | "image"
+  | "link"
+  | "file"
+  | "table"
+  | "brainstorm";
 
 export type ModuleColor =
   | "default"
@@ -71,7 +78,7 @@ export interface Module {
   isMinimized?: boolean; // 제목만 표시하는 최소화 상태
   createdAt: string;
   updatedAt: string;
-  data: MemoData | ScheduleData | ImageData | LinkData | FileData | BrainstormData;
+  data: MemoData | ScheduleData | ImageData | LinkData | FileData | TableData | BrainstormData;
 }
 
 export interface MemoData {
@@ -152,6 +159,14 @@ export interface FileData {
   fileType: string; // MIME type
   fileSize: number;
   src: string; // base64 data URL
+}
+
+/** 행·열 격자 표 — cells는 행 우선(row-major), 길이 = rowCount * colCount */
+export interface TableData {
+  title: string;
+  rowCount: number;
+  colCount: number;
+  cells: string[];
 }
 
 export interface Connection {
