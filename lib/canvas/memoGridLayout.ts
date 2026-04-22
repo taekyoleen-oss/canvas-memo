@@ -3,8 +3,6 @@ import type { Connection, Module } from "@/types";
 const GRID_MARGIN = 20;
 const GAP_X = 14;
 const GAP_Y = 14;
-const COL_W = 260;
-const SLOT_STEP_X = COL_W + GAP_X;
 const SECTION_GAP = 36;
 
 export interface MemoGridLayoutInput {
@@ -20,8 +18,8 @@ export interface MemoGridLayoutInput {
 }
 
 /**
- * 미연결 모듈: 네이버 메모처럼 가로로 채우고 줄바꿈.
- * 연결된 모듈(서로 연결선이 있는 컴포넌트): 그 아래 가로로 묶어 화면 중앙 정렬.
+ * 미연결 모듈: 각 모듈 실제 너비로 가로 채우고, 넘치면 다음 줄(네이버 메모 스타일).
+ * 연결된 모듈: 그 아래에서 컴포넌트별 가로 배치 후 가로 중앙 정렬.
  * 그룹에 속한 모듈·접힌 그룹 모듈은 건드리지 않음.
  */
 export function computeMemoLikeLayout(input: MemoGridLayoutInput): Map<string, { x: number; y: number }> {
@@ -47,31 +45,27 @@ export function computeMemoLikeLayout(input: MemoGridLayoutInput): Map<string, {
   const linkedModules = eligible.filter((m) => linkedIds.has(m.id));
 
   const canvasLogicalWidth = Math.max(320, containerWidthPx / Math.max(zoom, 0.05) - GRID_MARGIN * 2);
-  const ncols = Math.max(1, Math.floor((canvasLogicalWidth + GAP_X) / SLOT_STEP_X));
+  const lineRight = GRID_MARGIN + canvasLogicalWidth;
+  const centerX = GRID_MARGIN + canvasLogicalWidth / 2;
 
-  let y = GRID_MARGIN;
-  let row: Module[] = [];
-
-  function flushRow() {
-    if (row.length === 0) return;
-    const rowH = Math.max(68, ...row.map((m) => m.size.height));
-    let x = GRID_MARGIN;
-    for (const m of row) {
-      out.set(m.id, { x, y });
-      x += SLOT_STEP_X;
-    }
-    y += rowH + GAP_Y;
-    row = [];
-  }
+  let x = GRID_MARGIN;
+  let cumY = GRID_MARGIN;
+  let rowH = 0;
 
   for (const m of unlinked) {
-    if (row.length >= ncols) flushRow();
-    row.push(m);
+    const w = Math.max(1, m.size.width);
+    const h = Math.max(1, m.size.height);
+    if (x > GRID_MARGIN && x + w > lineRight) {
+      cumY += rowH + GAP_Y;
+      x = GRID_MARGIN;
+      rowH = 0;
+    }
+    out.set(m.id, { x, y: cumY });
+    rowH = Math.max(rowH, h);
+    x += w + GAP_X;
   }
-  flushRow();
 
-  const gridContentW = ncols * SLOT_STEP_X - GAP_X;
-  const centerX = GRID_MARGIN + gridContentW / 2;
+  const gridBottom = unlinked.length > 0 ? cumY + rowH : GRID_MARGIN;
 
   if (linkedModules.length === 0) return out;
 
@@ -112,7 +106,7 @@ export function computeMemoLikeLayout(input: MemoGridLayoutInput): Map<string, {
     return ta - tb;
   });
 
-  let stackY = y + SECTION_GAP;
+  let stackY = gridBottom + SECTION_GAP;
 
   for (const comp of components) {
     const sorted = [...comp].sort(
@@ -121,10 +115,10 @@ export function computeMemoLikeLayout(input: MemoGridLayoutInput): Map<string, {
     const totalW =
       sorted.reduce((s, m) => s + m.size.width, 0) + GAP_X * Math.max(0, sorted.length - 1);
     const maxH = Math.max(...sorted.map((m) => m.size.height));
-    let x = centerX - totalW / 2;
+    let cx = centerX - totalW / 2;
     for (const m of sorted) {
-      out.set(m.id, { x, y: stackY });
-      x += m.size.width + GAP_X;
+      out.set(m.id, { x: cx, y: stackY });
+      cx += m.size.width + GAP_X;
     }
     stackY += maxH + GAP_Y + 12;
   }

@@ -129,8 +129,8 @@ export default function ZoomControls({
         <button
           onClick={onAutoLayout}
           style={{ ...btnStyle, fontSize: 16 }}
-          aria-label="자동 정렬"
-          title="자동 정렬 (Auto Layout)"
+          aria-label="메모형 자동 정렬"
+          title="메모형 자동 정렬 — 연결 없는 모듈은 위에서 줄바꿈, 연결된 모듈은 아래 중앙"
         >
           ⊞
         </button>

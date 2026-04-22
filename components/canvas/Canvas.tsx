@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { usePinchZoom } from "@/hooks/usePinchZoom";
@@ -637,287 +637,73 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     updateViewport(boardId, vp);
   }
 
-  // ── Auto Layout ─────────────────────────────────────────────────
+  // ── 자동 정렬 (⊞): 메모형 배치만 적용 (평소에는 드래그로 자유 이동) ───────
   function handleAutoLayout() {
-    const allModules = board?.modules ?? [];
+    if (!board) return;
+
+    const allModules = board.modules;
     if (allModules.length === 0) return;
 
-    // 접힌 그룹에 속한 모듈은 레이아웃 제외
     const collapsedGroupModuleIds = new Set(
-      (board?.groups ?? [])
-        .filter((g) => g.isCollapsed)
-        .flatMap((g) => g.moduleIds)
-    );
-    const modules = allModules.filter((m) => !collapsedGroupModuleIds.has(m.id));
-    if (modules.length === 0) return;
-
-    const MODULE_W = 260;
-    const COLLAPSED_H = 68;
-    const GAP_X = 80;
-    const GAP_Y = 100;
-
-    const connections = board?.connections ?? [];
-    const moduleIds = new Set(modules.map((m) => m.id));
-
-    // 방향별 자식 맵: fromId → [{toId, fromAnchor}]
-    type Anchor = "top" | "right" | "bottom" | "left";
-    type EdgeInfo = { toId: string; fromAnchor: Anchor };
-    const childEdges = new Map<string, EdgeInfo[]>();
-    const hasParent = new Set<string>();
-
-    connections.forEach((conn) => {
-      if (!moduleIds.has(conn.fromModuleId) || !moduleIds.has(conn.toModuleId)) return;
-      if (!childEdges.has(conn.fromModuleId)) childEdges.set(conn.fromModuleId, []);
-      childEdges.get(conn.fromModuleId)!.push({
-        toId: conn.toModuleId,
-        fromAnchor: conn.fromAnchor as Anchor,
-      });
-      hasParent.add(conn.toModuleId);
-    });
-
-    const sorted = [...modules].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-    const roots = sorted.filter((m) => !hasParent.has(m.id));
-    const positionMap = new Map<string, { x: number; y: number }>();
-    const visited = new Set<string>();
-
-    // ── 서브트리 바운딩박스 계산 ─────────────────────────────────────
-    // 각 노드가 차지하는 전체 공간 (자신 + 모든 자손 포함)
-    // 레이아웃 원칙:
-    //   right 자식  → 부모 우측에 세로로 쌓임
-    //   left  자식  → 부모 좌측에 세로로 쌓임
-    //   bottom 자식 → 부모 아래 가로로 배치
-    //   top    자식 → 부모 위   가로로 배치
-    const sizeCache = new Map<string, { w: number; h: number }>();
-
-    function treeSize(id: string, depth = 0): { w: number; h: number } {
-      if (sizeCache.has(id)) return sizeCache.get(id)!;
-      if (depth > 30) return { w: MODULE_W, h: COLLAPSED_H }; // 순환 방지
-      sizeCache.set(id, { w: MODULE_W, h: COLLAPSED_H }); // 임시값 (순환 감지용)
-
-      const edges = childEdges.get(id) ?? [];
-      const byAnchor: Record<Anchor, string[]> = { right: [], bottom: [], left: [], top: [] };
-      edges.forEach((e) => byAnchor[e.fromAnchor].push(e.toId));
-
-      // right/left: 세로로 쌓임 → 높이 합산, 너비 최대값
-      function sideSize(children: string[]): { w: number; h: number } {
-        if (children.length === 0) return { w: 0, h: 0 };
-        const sizes = children.map((c) => treeSize(c, depth + 1));
-        const h = sizes.reduce((s, sz) => s + sz.h, 0) + (children.length - 1) * GAP_Y;
-        const w = GAP_X + Math.max(...sizes.map((sz) => sz.w));
-        return { w, h };
-      }
-
-      // top/bottom: 가로로 배치 → 너비 합산, 높이 최대값
-      function stackSize(children: string[]): { w: number; h: number } {
-        if (children.length === 0) return { w: 0, h: 0 };
-        const sizes = children.map((c) => treeSize(c, depth + 1));
-        const w = sizes.reduce((s, sz) => s + sz.w, 0) + (children.length - 1) * GAP_X;
-        const h = GAP_Y + Math.max(...sizes.map((sz) => sz.h));
-        return { w, h };
-      }
-
-      const right  = sideSize(byAnchor.right);
-      const left   = sideSize(byAnchor.left);
-      const bottom = stackSize(byAnchor.bottom);
-      const top    = stackSize(byAnchor.top);
-
-      // 전체 너비: 좌측확장 + 자신 + 우측확장, 상하 자식 너비도 고려
-      const horizW = left.w + MODULE_W + right.w;
-      const totalW = Math.max(horizW, bottom.w, top.w, MODULE_W);
-
-      // 전체 높이: 상단확장 + 자신 + 하단확장, 좌우 자식 높이도 고려
-      const vertH = top.h + COLLAPSED_H + bottom.h;
-      const totalH = Math.max(vertH, left.h, right.h, COLLAPSED_H);
-
-      const result = { w: totalW, h: totalH };
-      sizeCache.set(id, result);
-      return result;
-    }
-
-    // ── 재귀 배치 ────────────────────────────────────────────────────
-    function placeNode(id: string, x: number, y: number) {
-      if (visited.has(id)) return;
-      visited.add(id);
-      positionMap.set(id, { x, y });
-
-      const edges = childEdges.get(id) ?? [];
-      const byAnchor: Record<Anchor, string[]> = { right: [], bottom: [], left: [], top: [] };
-      edges.forEach((e) => byAnchor[e.fromAnchor].push(e.toId));
-
-      // right 자식: 우측에 세로로 쌓임, 부모 중앙에 수직 정렬
-      if (byAnchor.right.length > 0) {
-        const sizes = byAnchor.right.map((c) => treeSize(c));
-        const totalH = sizes.reduce((s, sz) => s + sz.h, 0) + (byAnchor.right.length - 1) * GAP_Y;
-        let cy = y + COLLAPSED_H / 2 - totalH / 2;
-        byAnchor.right.forEach((cid, i) => {
-          placeNode(cid, x + MODULE_W + GAP_X, cy);
-          cy += sizes[i].h + GAP_Y;
-        });
-      }
-
-      // left 자식: 좌측에 세로로 쌓임
-      if (byAnchor.left.length > 0) {
-        const sizes = byAnchor.left.map((c) => treeSize(c));
-        const totalH = sizes.reduce((s, sz) => s + sz.h, 0) + (byAnchor.left.length - 1) * GAP_Y;
-        let cy = y + COLLAPSED_H / 2 - totalH / 2;
-        byAnchor.left.forEach((cid, i) => {
-          placeNode(cid, x - GAP_X - MODULE_W, cy);
-          cy += sizes[i].h + GAP_Y;
-        });
-      }
-
-      // bottom 자식: 아래에 가로로 배치, 부모 중심에 수평 정렬
-      if (byAnchor.bottom.length > 0) {
-        const sizes = byAnchor.bottom.map((c) => treeSize(c));
-        const totalW = sizes.reduce((s, sz) => s + sz.w, 0) + (byAnchor.bottom.length - 1) * GAP_X;
-        let cx = x + MODULE_W / 2 - totalW / 2;
-        byAnchor.bottom.forEach((cid, i) => {
-          placeNode(cid, cx, y + COLLAPSED_H + GAP_Y);
-          cx += sizes[i].w + GAP_X;
-        });
-      }
-
-      // top 자식: 위에 가로로 배치
-      if (byAnchor.top.length > 0) {
-        const sizes = byAnchor.top.map((c) => treeSize(c));
-        const totalW = sizes.reduce((s, sz) => s + sz.w, 0) + (byAnchor.top.length - 1) * GAP_X;
-        let cx = x + MODULE_W / 2 - totalW / 2;
-        byAnchor.top.forEach((cid, i) => {
-          placeNode(cid, cx, y - COLLAPSED_H - GAP_Y);
-          cx += sizes[i].w + GAP_X;
-        });
-      }
-    }
-
-    // 루트 노드들을 세로로 쌓아서 배치
-    let rootY = 0;
-    roots.forEach((m) => {
-      placeNode(m.id, 0, rootY);
-      rootY += treeSize(m.id).h + GAP_Y * 2;
-    });
-
-    // 고아 모듈(연결 없어 미배치): 우측에 가로로 배치
-    const orphans = sorted.filter((m) => !visited.has(m.id));
-    const orphanY = rootY + GAP_Y;
-    let orphanX = 0;
-    orphans.forEach((m) => {
-      positionMap.set(m.id, { x: orphanX, y: orphanY });
-      orphanX += MODULE_W + GAP_X;
-    });
-
-    // ── 좌표 정규화 (minX, minY → START 위치로 이동) ─────────────────
-    const START_MARGIN = 40;
-    const allPos = [...positionMap.values()];
-    const minX = Math.min(...allPos.map((p) => p.x));
-    const minY = Math.min(...allPos.map((p) => p.y));
-
-    // 1) 모든 모듈 위치 적용
-    modules.forEach((module) => {
-      const pos = positionMap.get(module.id);
-      if (!pos) return;
-      updateModule(boardId, module.id, {
-        isExpanded: false,
-        position: {
-          x: pos.x - minX + START_MARGIN,
-          y: pos.y - minY + START_MARGIN,
-        },
-        size: { width: MODULE_W, height: COLLAPSED_H },
-      });
-    });
-
-    // 2) 줌 100% + 전체 레이아웃 화면 중앙
-    const maxX = Math.max(...allPos.map((p) => p.x)) - minX + MODULE_W + START_MARGIN * 2;
-    const maxY = Math.max(...allPos.map((p) => p.y)) - minY + COLLAPSED_H + START_MARGIN * 2;
-
-    const container = containerRef.current;
-    if (container) {
-      const W = container.clientWidth;
-      const H = container.clientHeight;
-      // 전체 모듈이 보이도록 줌 자동 계산 (최대 1.0, 최소 0.25)
-      const fitZoom = Math.min(W / maxX, H / maxY) * 0.88;
-      const newZoom = Math.max(0.25, Math.min(fitZoom, 1.0));
-      const vpX = (W - maxX * newZoom) / 2;
-      const vpY = (H - maxY * newZoom) / 2;
-      const vp = { x: vpX, y: vpY, zoom: newZoom };
-      setViewport(vp);
-      updateViewport(boardId, vp);
-    }
-  }
-
-  const collapsedIdsForLayout = useMemo(() => {
-    if (!board) return new Set<string>();
-    return new Set(
       (board.groups ?? [])
         .filter((g) => g.isCollapsed)
         .flatMap((g) => g.moduleIds)
     );
-  }, [board]);
+    const visible = allModules.filter((m) => !collapsedGroupModuleIds.has(m.id));
+    if (visible.length === 0) return;
 
-  const layoutSignature = useMemo(() => {
-    if (!board) return "";
-    const vis = board.modules.filter((m) => !collapsedIdsForLayout.has(m.id));
-    const modPart = vis
-      .map(
-        (m) =>
-          `${m.id}:${Math.round(m.size.width)}:${Math.round(m.size.height)}:${m.isExpanded ? 1 : 0}`
-      )
-      .join(";");
-    const connPart = (board.connections ?? []).map((c) => c.id).join(",");
-    const groupPart = (board.groups ?? [])
-      .map((g) => `${g.id}:${g.moduleIds.join("-")}`)
-      .join("|");
-    return `${modPart}@@${connPart}@@${groupPart}`;
-  }, [board, collapsedIdsForLayout]);
+    const groupedIds = new Set((board.groups ?? []).flatMap((g) => g.moduleIds));
+    const container = containerRef.current;
+    const cw = container?.clientWidth ?? 960;
 
-  const [layoutContainerW, setLayoutContainerW] = useState(0);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setLayoutContainerW(el.clientWidth));
-    ro.observe(el);
-    setLayoutContainerW(el.clientWidth);
-    return () => ro.disconnect();
-  }, [boardId]);
-
-  useEffect(() => {
-    const boardNow = useCanvasStore.getState().boards.find((b) => b.id === boardId);
-    if (!boardNow || layoutContainerW <= 0) return;
-    if (lassoMode) return;
-    if (connectionMode === "connecting") return;
-
-    const groupedIds = new Set((boardNow.groups ?? []).flatMap((g) => g.moduleIds));
     const next = computeMemoLikeLayout({
-      modules: boardNow.modules,
-      connections: boardNow.connections ?? [],
-      collapsedModuleIds: collapsedIdsForLayout,
+      modules: board.modules,
+      connections: board.connections ?? [],
+      collapsedModuleIds: collapsedGroupModuleIds,
       groupedModuleIds: groupedIds,
-      containerWidthPx: layoutContainerW,
+      containerWidthPx: cw,
       zoom: viewport.zoom,
     });
 
+    if (next.size === 0) return;
+
+    pushHistory();
+
     next.forEach((pos, id) => {
-      const m = boardNow.modules.find((x) => x.id === id);
-      if (!m) return;
-      if (
-        Math.abs(m.position.x - pos.x) > 0.5 ||
-        Math.abs(m.position.y - pos.y) > 0.5
-      ) {
-        updateModule(boardId, id, { position: pos });
-      }
+      updateModule(boardId, id, { position: pos });
     });
-  }, [
-    boardId,
-    layoutSignature,
-    layoutContainerW,
-    viewport.zoom,
-    lassoMode,
-    connectionMode,
-    updateModule,
-    collapsedIdsForLayout,
-  ]);
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    allModules.forEach((m) => {
+      if (collapsedGroupModuleIds.has(m.id)) return;
+      const pos = next.get(m.id) ?? m.position;
+      minX = Math.min(minX, pos.x);
+      minY = Math.min(minY, pos.y);
+      maxX = Math.max(maxX, pos.x + m.size.width);
+      maxY = Math.max(maxY, pos.y + m.size.height);
+    });
+    if (!Number.isFinite(minX)) return;
+
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+    if (contentW <= 0 || contentH <= 0) return;
+
+    const W = container?.clientWidth ?? 0;
+    const H = container?.clientHeight ?? 0;
+    if (W <= 0 || H <= 0) return;
+
+    const PADDING = 80;
+    const fitZoom = Math.min((W - PADDING * 2) / contentW, (H - PADDING * 2) / contentH) * 0.88;
+    const newZoom = Math.max(0.25, Math.min(fitZoom, 1.0));
+    const vpX = (W - contentW * newZoom) / 2 - minX * newZoom;
+    const vpY = (H - contentH * newZoom) / 2 - minY * newZoom;
+    const vp = { x: vpX, y: vpY, zoom: newZoom };
+    setViewport(vp);
+    updateViewport(boardId, vp);
+  }
 
   if (!board) return null;
 
