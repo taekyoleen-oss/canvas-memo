@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { usePinchZoom } from "@/hooks/usePinchZoom";
 import { screenToCanvas } from "@/lib/canvas/geometry";
+import { computeMemoLikeLayout } from "@/lib/canvas/memoGridLayout";
 import type { ModuleType, GroupColor } from "@/types";
 import CanvasGrid from "./CanvasGrid";
 import ConnectionLayer from "./ConnectionLayer";
@@ -844,6 +845,79 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
       updateViewport(boardId, vp);
     }
   }
+
+  const collapsedIdsForLayout = useMemo(() => {
+    if (!board) return new Set<string>();
+    return new Set(
+      (board.groups ?? [])
+        .filter((g) => g.isCollapsed)
+        .flatMap((g) => g.moduleIds)
+    );
+  }, [board]);
+
+  const layoutSignature = useMemo(() => {
+    if (!board) return "";
+    const vis = board.modules.filter((m) => !collapsedIdsForLayout.has(m.id));
+    const modPart = vis
+      .map(
+        (m) =>
+          `${m.id}:${Math.round(m.size.width)}:${Math.round(m.size.height)}:${m.isExpanded ? 1 : 0}`
+      )
+      .join(";");
+    const connPart = (board.connections ?? []).map((c) => c.id).join(",");
+    const groupPart = (board.groups ?? [])
+      .map((g) => `${g.id}:${g.moduleIds.join("-")}`)
+      .join("|");
+    return `${modPart}@@${connPart}@@${groupPart}`;
+  }, [board, collapsedIdsForLayout]);
+
+  const [layoutContainerW, setLayoutContainerW] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setLayoutContainerW(el.clientWidth));
+    ro.observe(el);
+    setLayoutContainerW(el.clientWidth);
+    return () => ro.disconnect();
+  }, [boardId]);
+
+  useEffect(() => {
+    const boardNow = useCanvasStore.getState().boards.find((b) => b.id === boardId);
+    if (!boardNow || layoutContainerW <= 0) return;
+    if (lassoMode) return;
+    if (connectionMode === "connecting") return;
+
+    const groupedIds = new Set((boardNow.groups ?? []).flatMap((g) => g.moduleIds));
+    const next = computeMemoLikeLayout({
+      modules: boardNow.modules,
+      connections: boardNow.connections ?? [],
+      collapsedModuleIds: collapsedIdsForLayout,
+      groupedModuleIds: groupedIds,
+      containerWidthPx: layoutContainerW,
+      zoom: viewport.zoom,
+    });
+
+    next.forEach((pos, id) => {
+      const m = boardNow.modules.find((x) => x.id === id);
+      if (!m) return;
+      if (
+        Math.abs(m.position.x - pos.x) > 0.5 ||
+        Math.abs(m.position.y - pos.y) > 0.5
+      ) {
+        updateModule(boardId, id, { position: pos });
+      }
+    });
+  }, [
+    boardId,
+    layoutSignature,
+    layoutContainerW,
+    viewport.zoom,
+    lassoMode,
+    connectionMode,
+    updateModule,
+    collapsedIdsForLayout,
+  ]);
 
   if (!board) return null;
 

@@ -211,20 +211,6 @@ export default function LoginPage() {
           </p>
         )}
 
-        {/* 비로그인 계속 */}
-        <button
-          onClick={() => { window.location.href = "/"; }}
-          style={{
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 13,
-            color: "var(--text-muted)",
-            textAlign: "center",
-          }}
-        >
-          로그인 없이 계속하기 →
-        </button>
       </div>
     </div>
   );

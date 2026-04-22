@@ -2,18 +2,11 @@
 
 import { useState } from "react";
 import type { ModuleType } from "@/types";
+import { STANDARD_MODULE_OPTIONS, BRAINSTORM_ADD_OPTION } from "./moduleAddOptions";
 
 interface ModuleFABProps {
   onAdd: (type: ModuleType) => void;
 }
-
-const MODULE_OPTIONS: { type: ModuleType; icon: string; label: string }[] = [
-  { type: "memo",     icon: "📝", label: "메모" },
-  { type: "schedule", icon: "✅", label: "일정" },
-  { type: "image",    icon: "🖼", label: "이미지" },
-  { type: "link",     icon: "🔗", label: "링크" },
-  { type: "file",     icon: "📎", label: "파일" },
-];
 
 export default function ModuleFAB({ onAdd }: ModuleFABProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -22,6 +15,8 @@ export default function ModuleFAB({ onAdd }: ModuleFABProps) {
     onAdd(type);
     setIsOpen(false);
   }
+
+  const standardCount = STANDARD_MODULE_OPTIONS.length;
 
   return (
     <div
@@ -59,8 +54,8 @@ export default function ModuleFAB({ onAdd }: ModuleFABProps) {
             style={{ zIndex: -1 }}
             onClick={() => setIsOpen(false)}
           />
-          <div className="flex flex-col-reverse gap-2">
-            {MODULE_OPTIONS.map((option, idx) => (
+          <div className="flex flex-col-reverse gap-2 items-end">
+            {STANDARD_MODULE_OPTIONS.map((option, idx) => (
               <div
                 key={option.type}
                 className="flex items-center gap-2 justify-end"
@@ -82,6 +77,7 @@ export default function ModuleFAB({ onAdd }: ModuleFABProps) {
                   {option.label}
                 </span>
                 <button
+                  type="button"
                   onClick={() => handleSelect(option.type)}
                   className="flex items-center justify-center rounded-full"
                   style={{
@@ -100,6 +96,62 @@ export default function ModuleFAB({ onAdd }: ModuleFABProps) {
                 </button>
               </div>
             ))}
+
+            <div
+              className="w-full max-w-[220px] my-1"
+              style={{
+                height: 1,
+                background: "linear-gradient(90deg, transparent, var(--border), transparent)",
+              }}
+              aria-hidden
+            />
+
+            <div
+              className="flex flex-col gap-1.5 items-end w-full max-w-[220px]"
+              style={{
+                animation: `fabItemIn 150ms ease-out ${standardCount * 40}ms both`,
+              }}
+            >
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wide pr-1"
+                style={{ color: "var(--text-muted)" }}
+              >
+                발상
+              </span>
+              <div className="flex items-center gap-2 justify-end w-full">
+                <span
+                  className="rounded-lg px-3 text-sm font-semibold whitespace-nowrap"
+                  style={{
+                    height: 36,
+                    lineHeight: "36px",
+                    background: "var(--surface-hover)",
+                    boxShadow: "var(--shadow-md)",
+                    border: "1px dashed var(--accent)",
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {BRAINSTORM_ADD_OPTION.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleSelect(BRAINSTORM_ADD_OPTION.type)}
+                  className="flex items-center justify-center rounded-full"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    background: "var(--surface-hover)",
+                    border: "1px dashed var(--accent)",
+                    boxShadow: "var(--shadow-md)",
+                    cursor: "pointer",
+                    fontSize: 20,
+                    flexShrink: 0,
+                  }}
+                  aria-label={BRAINSTORM_ADD_OPTION.label}
+                >
+                  {BRAINSTORM_ADD_OPTION.icon}
+                </button>
+              </div>
+            </div>
           </div>
         </>
       )}

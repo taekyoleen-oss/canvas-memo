@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useCanvasStore } from "@/store/canvas";
-import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData } from "@/types";
+import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData, BrainstormData } from "@/types";
 
 interface ModuleSearchProps {
   isOpen: boolean;
@@ -23,6 +23,9 @@ function getModuleText(module: Module): string {
     case "schedule":
       (d as ScheduleData).items.forEach((item) => parts.push(item.text));
       break;
+    case "brainstorm":
+      (d as BrainstormData).items.forEach((item) => parts.push(item.text));
+      break;
     case "image":
       parts.push((d as ImageData).caption ?? "");
       break;
@@ -41,6 +44,7 @@ function getModuleTypeLabel(type: Module["type"]): string {
   const map: Record<Module["type"], string> = {
     memo: "📝",
     schedule: "✅",
+    brainstorm: "💡",
     image: "🖼",
     link: "🔗",
     file: "📎",
@@ -65,6 +69,10 @@ function getModuleSubtitle(module: Module): string {
   if (module.type === "schedule") {
     const items = (d as ScheduleData).items;
     return `항목 ${items.length}개 (완료: ${items.filter((i) => i.done).length}개)`;
+  }
+  if (module.type === "brainstorm") {
+    const items = (d as BrainstormData).items;
+    return `아이디어 ${items.length}개`;
   }
   if (module.type === "link") return (d as LinkData).url ?? "";
   if (module.type === "file") {

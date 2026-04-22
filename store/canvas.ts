@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 import { Board, Module, Connection, Group } from "@/types";
-import { loadAppData, createDebouncedSave } from "@/lib/storage";
+import {
+  loadAppData,
+  loadAppDataForUser,
+  createDebouncedSave,
+  saveAppData,
+} from "@/lib/storage";
 import { createClient } from "@/lib/supabase/client";
 
 interface CanvasStore {
@@ -68,8 +73,10 @@ interface CanvasStore {
   // 뷰포트
   updateViewport(boardId: string, viewport: Board["viewport"]): void;
 
-  // 초기화
-  hydrate(): void;
+  // 초기화 (로그인한 사용자 id 기준 로컬 캐시 + 이후 Supabase)
+  hydrateForUser(userId: string): void;
+  /** 로그아웃 시 메모리·디바운스 저장기 정리 */
+  resetForLogout(): void;
   // Supabase에서 유저 데이터 로드 (로그인 후 호출)
   hydrateFromSupabase(userId: string): Promise<void>;
   // Supabase에 전체 상태 업서트 (필요 시 수동 호출)
@@ -78,6 +85,9 @@ interface CanvasStore {
 
 let debouncedSave: (() => void) | null = null;
 let debouncedSupabaseSync: (() => void) | null = null;
+
+/** 레거시 공용 키의 보드를 한 번만 현재 계정으로 옮김 (동일 브라우저 다계정 오염 방지) */
+const LEGACY_CANVAS_MIGRATED_FLAG = "mindcanvas_v1_legacy_canvas_migrated";
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -186,14 +196,46 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   pendingGroupInvite: null,
   _history: [],
 
-  hydrate() {
-    const appData = loadAppData();
+  hydrateForUser(userId: string) {
+    let appData = loadAppDataForUser(userId);
+
+    if (
+      !appData &&
+      typeof window !== "undefined" &&
+      localStorage.getItem(LEGACY_CANVAS_MIGRATED_FLAG) !== "1"
+    ) {
+      const legacy = loadAppData();
+      if (legacy && legacy.boards.length > 0) {
+        appData = legacy;
+        localStorage.setItem(LEGACY_CANVAS_MIGRATED_FLAG, "1");
+        saveAppData({
+          version: legacy.version,
+          theme: legacy.theme,
+          boards: [],
+          lastOpenedBoardId: null,
+        });
+      }
+    }
+
     if (!appData) {
-      // localStorage 없으면 debouncedSave만 초기화
+      set({
+        boards: [],
+        activeBoardId: null,
+        focusGroupId: null,
+        focusModuleId: null,
+        pendingGroupInvite: null,
+        _history: [],
+      });
       debouncedSave = createDebouncedSave(() => {
         const state = get();
-        return { version: 1, theme: "system", boards: state.boards, lastOpenedBoardId: state.activeBoardId };
-      });
+        const prev = loadAppDataForUser(userId);
+        return {
+          version: 1,
+          theme: prev?.theme ?? "system",
+          boards: state.boards,
+          lastOpenedBoardId: state.activeBoardId,
+        };
+      }, userId);
       return;
     }
 
@@ -214,12 +256,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave = createDebouncedSave(() => {
       const state = get();
+      const prev = loadAppDataForUser(userId);
       return {
         version: 1,
-        theme: "system",
+        theme: prev?.theme ?? "system",
         boards: state.boards,
         lastOpenedBoardId: state.activeBoardId,
       };
+    }, userId);
+  },
+
+  resetForLogout() {
+    debouncedSave = null;
+    debouncedSupabaseSync = null;
+    set({
+      boards: [],
+      activeBoardId: null,
+      focusGroupId: null,
+      focusModuleId: null,
+      pendingGroupInvite: null,
+      _history: [],
     });
   },
 

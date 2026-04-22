@@ -32,6 +32,7 @@ const MODULE_TYPE_ICON: Record<Module["type"], string> = {
   image: "🖼",
   link: "🔗",
   file: "📎",
+  brainstorm: "💡",
 };
 
 export default function ModuleCard({

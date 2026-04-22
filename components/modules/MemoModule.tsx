@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, type ReactNode } from "react";
 import { useRichTextStore } from "@/store/richText";
 import type { MemoData } from "@/types";
 
@@ -9,7 +9,8 @@ function stripHtml(html: string): string {
   if (!html) return "";
   return html
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote)>/gi, "\n")
+    .replace(/<(?:div|p|h[1-6]|li|tr|blockquote)(?:\s[^>]*)?>/gi, "")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&lt;/g, "<")
@@ -17,6 +18,17 @@ function stripHtml(html: string): string {
     .replace(/&amp;/g, "&")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** -webkit-line-clamp 환경에서는 \\n + pre-wrap이 무시되는 경우가 있어 <br />로 표시 */
+function previewNodes(text: string): ReactNode {
+  const lines = text.split("\n");
+  return lines.map((line, i) => (
+    <span key={i}>
+      {i > 0 ? <br /> : null}
+      {line}
+    </span>
+  ));
 }
 
 interface MemoModuleProps {
@@ -44,6 +56,7 @@ export default function MemoModule({ data, isExpanded, onChange }: MemoModulePro
   // ── 접힌 상태: 플레인 텍스트 미리보기 ──────────────────────────────────
   if (!isExpanded) {
     const preview = stripHtml(data.content ?? "");
+    const lineClamp = data.previewLines > 0 ? data.previewLines : 2;
     return (
       <div className="px-3 py-2">
         <p
@@ -52,12 +65,13 @@ export default function MemoModule({ data, isExpanded, onChange }: MemoModulePro
             color: "var(--text-secondary)",
             overflow: "hidden",
             display: "-webkit-box",
-            WebkitLineClamp: 2,
+            WebkitLineClamp: lineClamp,
             WebkitBoxOrient: "vertical",
-            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            overflowWrap: "break-word",
           }}
         >
-          {preview || "내용을 입력하세요..."}
+          {preview ? previewNodes(preview) : "내용을 입력하세요..."}
         </p>
       </div>
     );

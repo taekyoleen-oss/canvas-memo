@@ -1,4 +1,4 @@
-// localStorage key: "mindcanvas_v1"
+// 로컬 캐시: 계정별 `mindcanvas_v1_u_<userId>` (lib/storage). 레거시 공용 키 `mindcanvas_v1`은 마이그레이션용.
 
 export interface AppData {
   version: number;
@@ -20,7 +20,7 @@ export interface Board {
   viewport: { x: number; y: number; zoom: number };
 }
 
-export type ModuleType = "memo" | "schedule" | "image" | "link" | "file";
+export type ModuleType = "memo" | "schedule" | "image" | "link" | "file" | "brainstorm";
 
 export type ModuleColor =
   | "default"
@@ -43,7 +43,7 @@ export interface Module {
   isMinimized?: boolean; // 제목만 표시하는 최소화 상태
   createdAt: string;
   updatedAt: string;
-  data: MemoData | ScheduleData | ImageData | LinkData | FileData;
+  data: MemoData | ScheduleData | ImageData | LinkData | FileData | BrainstormData;
 }
 
 export interface MemoData {
@@ -56,6 +56,18 @@ export interface ScheduleData {
   title: string;
   items: ScheduleItem[];
   previewCount: number; // 기본 3
+}
+
+/** 빠른 아이디어 나열(일정 모듈과 유사한 UX, 완료 체크 없음) */
+export interface BrainstormItem {
+  id: string;
+  text: string;
+}
+
+export interface BrainstormData {
+  title: string;
+  items: BrainstormItem[];
+  previewCount: number; // 접힌 상태에서 보여 줄 아이디어 개수, 기본 4
 }
 
 export interface ScheduleItem {

@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
-import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData } from "@/types";
+import type { Module, MemoData, ScheduleData, ImageData, LinkData, FileData, BrainstormData } from "@/types";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
@@ -13,6 +13,7 @@ import ScheduleModule from "./ScheduleModule";
 import ImageModule from "./ImageModule";
 import LinkModule from "./LinkModule";
 import FileModule from "./FileModule";
+import BrainstormModule from "./BrainstormModule";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
 import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
@@ -383,6 +384,7 @@ export default function ModuleCardWrapper({
       case "image": return <ImageModule data={module.data as ImageData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "link": return <LinkModule data={module.data as LinkData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "file": return <FileModule data={module.data as FileData} moduleId={module.id} isExpanded={module.isExpanded} onChange={handleDataChange} />;
+      case "brainstorm": return <BrainstormModule data={module.data as BrainstormData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       default: return null;
     }
   }
@@ -634,6 +636,10 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
       const d = module.data as ScheduleData;
       return <ScheduleFullView data={d} onChange={(nd) => onChange(nd)} />;
     }
+    case "brainstorm": {
+      const d = module.data as BrainstormData;
+      return <BrainstormFullView data={d} onChange={(nd) => onChange(nd)} />;
+    }
     case "image": {
       const d = module.data as ImageData;
       return (
@@ -740,6 +746,44 @@ function ScheduleFullView({ data, onChange }: { data: ScheduleData; onChange: (d
           placeholder="새 항목 추가..."
           style={{ flex: 1, height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none" }} />
         <button onClick={addItem} style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer", fontSize: 16, fontWeight: 700 }}>+</button>
+      </div>
+    </div>
+  );
+}
+
+// ── 브레인스토밍 전체보기 (일정 전체보기와 동일 패턴, 체크 없음) ─────────────
+function BrainstormFullView({ data, onChange }: { data: BrainstormData; onChange: (d: BrainstormData) => void }) {
+  const [newItemText, setNewItemText] = useState("");
+
+  function deleteItem(id: string) {
+    onChange({ ...data, items: data.items.filter((item) => item.id !== id) });
+  }
+
+  function addItem() {
+    if (!newItemText.trim()) return;
+    onChange({ ...data, items: [...data.items, { id: uuidv4(), text: newItemText.trim() }] });
+    setNewItemText("");
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {data.items.length === 0 && (
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>아이디어가 없습니다. 아래에서 추가해 보세요.</p>
+      )}
+      {data.items.map((item) => (
+        <div key={item.id} className="flex items-start gap-2 group">
+          <span className="text-sm select-none pt-0.5" style={{ color: "var(--accent)", flexShrink: 0 }}>·</span>
+          <span className="flex-1 text-sm min-w-0" style={{ color: "var(--text-primary)", wordBreak: "break-word" }}>{item.text}</span>
+          <button type="button" onClick={() => deleteItem(item.id)} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 14, padding: "2px 4px", opacity: 0, transition: "opacity 0.15s", flexShrink: 0 }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")} onMouseLeave={(e) => (e.currentTarget.style.opacity = "0")}>✕</button>
+        </div>
+      ))}
+      <div className="flex gap-1 mt-2">
+        <input type="text" value={newItemText} onChange={(e) => setNewItemText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addItem(); } }}
+          placeholder="아이디어 추가…"
+          style={{ flex: 1, height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none" }} />
+        <button type="button" onClick={addItem} style={{ height: 36, padding: "0 14px", borderRadius: 8, background: "var(--primary)", color: "var(--primary-fg)", border: "none", cursor: "pointer", fontSize: 16, fontWeight: 700 }}>+</button>
       </div>
     </div>
   );

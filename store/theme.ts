@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { loadAppData, saveAppData } from "@/lib/storage";
+import { loadAppDataForUser, saveAppDataForUser } from "@/lib/storage";
+import { useAuthStore } from "@/store/auth";
 
 interface ThemeStore {
   theme: "light" | "dark" | "system";
@@ -12,12 +13,17 @@ export const useThemeStore = create<ThemeStore>((set) => ({
   setTheme(theme) {
     set({ theme });
 
-    // localStorage에 테마 설정 저장
-    if (typeof window !== "undefined") {
-      const existing = loadAppData();
-      if (existing) {
-        saveAppData({ ...existing, theme });
-      }
-    }
+    if (typeof window === "undefined") return;
+    const userId = useAuthStore.getState().user?.id;
+    if (!userId) return;
+
+    const existing = loadAppDataForUser(userId);
+    const base = existing ?? {
+      version: 1,
+      theme: "system",
+      boards: [],
+      lastOpenedBoardId: null,
+    };
+    saveAppDataForUser(userId, { ...base, theme });
   },
 }));

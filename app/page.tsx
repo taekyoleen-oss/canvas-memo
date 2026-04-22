@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import TopHeader from "@/components/layout/TopHeader";
@@ -128,31 +129,55 @@ function AddBoardDialog({ isOpen, onClose, onConfirm }: AddBoardDialogProps) {
 }
 
 export default function Home() {
-  const { boards, activeBoardId, addBoard, addModule, setActiveBoard, hydrate, hydrateFromSupabase } =
-    useCanvasStore();
-  const { user, init: initAuth } = useAuthStore();
+  const router = useRouter();
+  const {
+    boards,
+    activeBoardId,
+    addBoard,
+    addModule,
+    setActiveBoard,
+    hydrateForUser,
+    hydrateFromSupabase,
+    resetForLogout,
+  } = useCanvasStore();
+  const { user, loading: authLoading, init: initAuth } = useAuthStore();
   const [showAddBoard, setShowAddBoard] = useState(false);
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
+  const [appReady, setAppReady] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const exitConfirmedRef = useRef(false);
 
   // auth 초기화 (1회)
-  useEffect(() => { initAuth(); }, [initAuth]);
-
-  // localStorage에서 초기 로드 — 완료 전에는 빈 화면으로 hydration mismatch 방지
   useEffect(() => {
-    hydrate();
-    setHydrated(true);
-  }, [hydrate]);
+    initAuth();
+  }, [initAuth]);
 
-  // 로그인 상태가 되면 Supabase 데이터로 교체
+  // 로그인한 사용자만 계정별 로컬 캐시 로드 (비로그인 시 캔버스 데이터는 로드하지 않음)
   useEffect(() => {
-    if (!user) return;
+    if (authLoading) return;
+    if (!user) {
+      resetForLogout();
+      setAppReady(true);
+      return;
+    }
+    hydrateForUser(user.id);
+    setAppReady(true);
+  }, [user, authLoading, hydrateForUser, resetForLogout]);
+
+  // 로그인 상태에서 Supabase와 동기화
+  useEffect(() => {
+    if (!user || authLoading) return;
     initSupabaseSync(user.id);
     hydrateFromSupabase(user.id);
-  }, [user, hydrateFromSupabase]);
+  }, [user, authLoading, hydrateFromSupabase]);
+
+  // 미들웨어가 없는 환경(로컬 env 미설정 등)에서도 비로그인 시 로그인으로 이동
+  useEffect(() => {
+    if (!authLoading && appReady && !user) {
+      router.replace("/auth/login");
+    }
+  }, [authLoading, appReady, user, router]);
 
   // Ctrl+K: 검색 열기
   useEffect(() => {
@@ -211,6 +236,8 @@ export default function Home() {
         ? { title: "새 메모", content: "", previewLines: 2 }
         : type === "schedule"
         ? { title: "새 일정", items: [], previewCount: 3 }
+        : type === "brainstorm"
+        ? { title: "브레인스토밍", items: [], previewCount: 4 }
         : type === "image"
         ? { title: "이미지", src: "", caption: "" }
         : type === "link"
@@ -233,8 +260,13 @@ export default function Home() {
     });
   }
 
-  // hydration 완료 전: 빈 화면으로 SSR mismatch 방지 (깜빡임 없이 즉시 전환)
-  if (!hydrated) {
+  // 인증·로컬 캐시 준비 전
+  if (!appReady || authLoading) {
+    return <div style={{ width: "100%", height: "100dvh", background: "var(--background)" }} />;
+  }
+
+  // 비로그인(리다이렉트 중)
+  if (!user) {
     return <div style={{ width: "100%", height: "100dvh", background: "var(--background)" }} />;
   }
 
