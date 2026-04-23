@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { v4 as uuidv4 } from "uuid";
 import type {
+  AppData,
   Board,
   Module,
   Connection,
@@ -17,19 +18,56 @@ import { findMapToolDef } from "@/lib/canvas/mapTemplateTools";
 import { moduleColorToConnectionHex } from "@/lib/moduleColorHex";
 import { buildTemplateData } from "@/lib/moduleTemplates";
 import { nextSidebarOrder, normalizeBoardCategory } from "@/lib/boardCategory";
+import { normalizeBoardForClient, normalizeBoardsForClient } from "@/lib/boardIntegrity";
+import {
+  boardsChildrenSignature,
+  collectSnapshotsForMerge,
+  mergeHydratedBoardsWithSnapshotMap,
+} from "@/lib/boardRecovery";
 import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
+import {
+  applyClaudeMemoBrandingMigration,
+  ensureTopicNotesCanonicalPair,
+  hasLegacyTopicGroupedBoard,
+  migrateLegacyTopicGroupedBoards,
+  normalizeTopicSidebarOrders,
+  recoverCanonicalTopicNotesFromMemoScheduleBoards,
+  repairMisclassifiedTopicNotesBoards,
+} from "@/lib/topicBoardSeed";
 import {
   loadAppData,
   loadAppDataForUser,
   createDebouncedSave,
   saveAppData,
+  saveAppDataForUser,
 } from "@/lib/storage";
 import { createClient } from "@/lib/supabase/client";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 
+function boardCategoryFromDb(raw: string | undefined): BoardCategory {
+  if (raw === "thinking") return "thinking";
+  if (raw === "topic_notes") return "topic_notes";
+  return "memo_schedule";
+}
+
+function pickBoardInWorkspace(
+  boards: Board[],
+  workspace: BoardCategory,
+  preferId: string | null | undefined
+): string | null {
+  const list = boards
+    .filter((b) => normalizeBoardCategory(b) === workspace)
+    .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+  if (preferId && list.some((b) => b.id === preferId)) return preferId;
+  return list[0]?.id ?? null;
+}
+
 interface CanvasStore {
   boards: Board[];
   activeBoardId: string | null;
+  /** 상단 탭 — 사이드바에 표시할 보드 범위 */
+  activeWorkspace: BoardCategory;
+  lastOpenedBoardByCategory: Partial<Record<BoardCategory, string>>;
 
   // 보드 CRUD
   addBoard(
@@ -41,11 +79,14 @@ interface CanvasStore {
   removeBoard(boardId: string): void;
   updateBoard(boardId: string, updates: Partial<Omit<Board, "id">>): void;
   setActiveBoard(boardId: string): void;
+  setActiveWorkspace(workspace: BoardCategory): void;
   reorderBoardsInCategory(
     category: BoardCategory,
     fromIndex: number,
     toIndex: number
   ): void;
+  /** 주제별 기본 보드(클로드·커서 AI)만 생성 — 온보딩 등. 추가 보드는 addBoard(topic) */
+  seedTopicNotesDefaults(): void;
 
   // 모듈 CRUD
   addModule(
@@ -118,12 +159,24 @@ interface CanvasStore {
   // 뷰포트
   updateViewport(boardId: string, viewport: Board["viewport"]): void;
 
+  /** 캔버스 컨테이너(client) 크기 — 툴바로 모듈 추가 시 화면 중앙 좌표 계산용 */
+  canvasInnerByBoardId: Record<string, { w: number; h: number }>;
+  setCanvasInnerSize(boardId: string, width: number, height: number): void;
+
   // 초기화 (로그인한 사용자 id 기준 로컬 캐시 + 이후 Supabase)
-  hydrateForUser(userId: string): void;
+  /** preferRemoteBoards: 이미 Supabase로 boards를 채운 뒤 — 로컬은 탭·마지막 보드 id만 반영 */
+  hydrateForUser(userId: string, opts?: { preferRemoteBoards?: boolean }): void;
   /** 로그아웃 시 메모리·디바운스 저장기 정리 */
   resetForLogout(): void;
   // Supabase에서 유저 데이터 로드 (로그인 후 호출)
   hydrateFromSupabase(userId: string): Promise<void>;
+  /** 로컬 모듈·연결·그룹이 DB보다 적거나 비었을 때 서버 행으로 맞춤 (복구) */
+  repairEmptyBoardsFromSupabase(userId: string): Promise<void>;
+  /**
+   * Supabase·메모리보다 브라우저 localStorage 쪽에 모듈/연결이 더 많이 남아 있으면 합친 뒤 DB에 다시 올립니다.
+   * (서버 행이 이미 지워진 경우에도 로컬 캐시로 되살릴 수 있는 유일한 자동 경로)
+   */
+  recoverFromBrowserCaches(userId: string): Promise<boolean>;
   // Supabase에 전체 상태 업서트 (필요 시 수동 호출)
   syncToSupabase(userId: string): Promise<void>;
 }
@@ -162,12 +215,137 @@ function bboxOfModules(modules: Module[]): {
 
 // ── Supabase 동기화 헬퍼 ─────────────────────────────────────────────────
 
+function mapModuleFromSupabaseRow(m: {
+  id: string;
+  type: string;
+  position: Module["position"];
+  size: Module["size"];
+  z_index: number | null;
+  color: string;
+  is_expanded: boolean;
+  is_minimized?: boolean | null;
+  data: Module["data"];
+  created_at: string;
+  updated_at: string;
+}): Module {
+  return {
+    id: m.id,
+    type: m.type as Module["type"],
+    position: m.position,
+    size: m.size,
+    zIndex: typeof m.z_index === "number" ? m.z_index : 0,
+    color: m.color as Module["color"],
+    isExpanded: m.is_expanded,
+    isMinimized: m.is_minimized ?? false,
+    data: m.data,
+    createdAt: m.created_at,
+    updatedAt: m.updated_at,
+  };
+}
+
+function mapConnectionFromSupabaseRow(c: {
+  id: string;
+  from_module_id: string;
+  to_module_id: string;
+  from_anchor: Connection["fromAnchor"];
+  to_anchor: Connection["toAnchor"];
+  label: string | null;
+  style: Connection["style"] | null;
+  color: string | null;
+}): Connection {
+  return {
+    id: c.id,
+    fromModuleId: c.from_module_id,
+    toModuleId: c.to_module_id,
+    fromAnchor: c.from_anchor,
+    toAnchor: c.to_anchor,
+    label: (c.label ?? "") as string,
+    style: (c.style ?? "solid") as Connection["style"],
+    color: (c.color ?? "") as string,
+  };
+}
+
+function mapGroupFromSupabaseRow(g: {
+  id: string;
+  name: string;
+  module_ids: string[];
+  position: Group["position"];
+  size: Group["size"];
+  color: Group["color"];
+  is_collapsed: boolean;
+  created_at: string;
+  updated_at: string;
+  map_template_id?: string | null;
+  map_pivot?: { x: number; y: number } | null;
+  map_scale?: number | null;
+}): Group {
+  const row = g as {
+    map_template_id?: string | null;
+    map_pivot?: { x: number; y: number } | null;
+    map_scale?: number | null;
+  };
+  const mt = row.map_template_id;
+  return {
+    id: g.id,
+    name: g.name,
+    moduleIds: g.module_ids as string[],
+    position: g.position,
+    size: g.size,
+    color: g.color,
+    isCollapsed: g.is_collapsed,
+    createdAt: g.created_at,
+    updatedAt: g.updated_at,
+    ...(mt
+      ? {
+          mapTemplateId: mt as BrainstormMapType,
+          mapPivot: row.map_pivot ?? undefined,
+          mapScale:
+            typeof row.map_scale === "number" && row.map_scale > 0
+              ? row.map_scale
+              : undefined,
+        }
+      : {}),
+  } satisfies Group;
+}
+
 async function pushBoardToSupabase(
   supabase: ReturnType<typeof createClient>,
   userId: string,
   board: Board
 ) {
-  // boards upsert
+  const groups = board.groups ?? [];
+  const modules = board.modules ?? [];
+  const connections = board.connections ?? [];
+
+  const { count, error: countErr } = await supabase
+    .from("modules")
+    .select("*", { count: "exact", head: true })
+    .eq("board_id", board.id);
+
+  if (countErr) {
+    console.warn("[MindCanvas] Supabase module count failed:", countErr.message);
+  }
+
+  const { count: connHeadCount, error: connCountErr } = await supabase
+    .from("connections")
+    .select("*", { count: "exact", head: true })
+    .eq("board_id", board.id);
+
+  if (connCountErr) {
+    console.warn("[MindCanvas] Supabase connection count failed:", connCountErr.message);
+  }
+
+  const dbModuleCount = count ?? 0;
+  const dbConnCount = connHeadCount ?? 0;
+  /**
+   * 클라이언트가 비었거나 DB보다 모듈이 적을 때 전체 삭제·재삽입하면 서버에만 남은 메모·연결선이 사라집니다.
+   * 연결만 비고 DB에 연결이 있으면 동일하게 보존합니다.
+   */
+  const preserveChildRows =
+    (modules.length === 0 && dbModuleCount > 0) ||
+    (connections.length === 0 && dbConnCount > 0) ||
+    (modules.length > 0 && modules.length < dbModuleCount);
+
   await supabase.from("boards").upsert({
     id: board.id,
     user_id: userId,
@@ -181,10 +359,17 @@ async function pushBoardToSupabase(
     updated_at: board.updatedAt,
   });
 
-  // modules upsert
-  if (board.modules.length > 0) {
-    await supabase.from("modules").upsert(
-      board.modules.map((m) => ({
+  if (preserveChildRows) {
+    return;
+  }
+
+  await supabase.from("connections").delete().eq("board_id", board.id);
+  await supabase.from("groups").delete().eq("board_id", board.id);
+  await supabase.from("modules").delete().eq("board_id", board.id);
+
+  if (modules.length > 0) {
+    await supabase.from("modules").insert(
+      modules.map((m) => ({
         id: m.id,
         board_id: board.id,
         user_id: userId,
@@ -202,10 +387,9 @@ async function pushBoardToSupabase(
     );
   }
 
-  // connections upsert
-  if (board.connections.length > 0) {
-    await supabase.from("connections").upsert(
-      board.connections.map((c) => ({
+  if (connections.length > 0) {
+    await supabase.from("connections").insert(
+      connections.map((c) => ({
         id: c.id,
         board_id: board.id,
         user_id: userId,
@@ -220,10 +404,8 @@ async function pushBoardToSupabase(
     );
   }
 
-  // groups upsert
-  const groups = board.groups ?? [];
   if (groups.length > 0) {
-    await supabase.from("groups").upsert(
+    await supabase.from("groups").insert(
       groups.map((g) => ({
         id: g.id,
         board_id: board.id,
@@ -242,18 +424,6 @@ async function pushBoardToSupabase(
       }))
     );
   }
-
-  // DB에서 삭제된 그룹 제거 (현재 목록에 없는 것)
-  if (groups.length > 0) {
-    await supabase
-      .from("groups")
-      .delete()
-      .eq("board_id", board.id)
-      .not("id", "in", `(${groups.map((g) => g.id).join(",")})`);
-  } else {
-    // 그룹이 하나도 없으면 이 보드의 모든 그룹 삭제
-    await supabase.from("groups").delete().eq("board_id", board.id);
-  }
 }
 
 // ── 스토어 ───────────────────────────────────────────────────────────────
@@ -263,12 +433,25 @@ const HISTORY_LIMIT = 30;
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
   boards: [],
   activeBoardId: null,
+  activeWorkspace: "memo_schedule",
+  lastOpenedBoardByCategory: {},
   focusGroupId: null,
   focusModuleId: null,
   pendingGroupInvite: null,
   _history: [],
+  canvasInnerByBoardId: {},
 
-  hydrateForUser(userId: string) {
+  setCanvasInnerSize(boardId, width, height) {
+    if (width <= 0 || height <= 0) return;
+    set((s) => ({
+      canvasInnerByBoardId: {
+        ...s.canvasInnerByBoardId,
+        [boardId]: { w: Math.round(width), h: Math.round(height) },
+      },
+    }));
+  },
+
+  hydrateForUser(userId: string, opts?: { preferRemoteBoards?: boolean }) {
     let appData = loadAppDataForUser(userId);
 
     if (
@@ -289,10 +472,73 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       }
     }
 
+    if (opts?.preferRemoteBoards && get().boards.length > 0) {
+      const boardsNow = get().boards;
+      const validIds = new Set(boardsNow.map((b) => b.id));
+
+      debouncedSave = createDebouncedSave(() => {
+        const state = get();
+        const prev = loadAppDataForUser(userId);
+        const payload: AppData = {
+          version: 1,
+          theme: prev?.theme ?? "system",
+          boards: state.boards,
+          lastOpenedBoardId: state.activeBoardId,
+          activeWorkspace: state.activeWorkspace,
+          lastOpenedBoardByCategory: state.lastOpenedBoardByCategory,
+        };
+        return payload;
+      }, userId);
+
+      let activeBoardId = get().activeBoardId;
+      let activeWorkspace = get().activeWorkspace;
+      const lastBy: Partial<Record<BoardCategory, string>> = {
+        ...get().lastOpenedBoardByCategory,
+      };
+
+      const savedId = appData?.lastOpenedBoardId;
+      if (savedId && validIds.has(savedId)) {
+        const br = boardsNow.find((b) => b.id === savedId);
+        if (br) {
+          activeBoardId = savedId;
+          activeWorkspace = normalizeBoardCategory(br);
+        }
+      }
+
+      const fromFile = appData?.lastOpenedBoardByCategory ?? {};
+      for (const w of ["memo_schedule", "thinking", "topic_notes"] as const) {
+        const id = fromFile[w];
+        if (id && validIds.has(id)) lastBy[w] = id;
+      }
+
+      const aw = appData?.activeWorkspace;
+      if (aw === "memo_schedule" || aw === "thinking" || aw === "topic_notes") {
+        const prefBoard =
+          lastBy[aw] ??
+          (activeBoardId && validIds.has(activeBoardId) ? activeBoardId : null);
+        if (prefBoard && validIds.has(prefBoard)) {
+          const br = boardsNow.find((b) => b.id === prefBoard);
+          if (br) {
+            activeWorkspace = aw;
+            activeBoardId = prefBoard;
+          }
+        }
+      }
+
+      set({
+        activeBoardId,
+        activeWorkspace,
+        lastOpenedBoardByCategory: lastBy,
+      });
+      return;
+    }
+
     if (!appData) {
       set({
         boards: [],
         activeBoardId: null,
+        activeWorkspace: "memo_schedule",
+        lastOpenedBoardByCategory: {},
         focusGroupId: null,
         focusModuleId: null,
         pendingGroupInvite: null,
@@ -301,12 +547,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       debouncedSave = createDebouncedSave(() => {
         const state = get();
         const prev = loadAppDataForUser(userId);
-        return {
+        const payload: AppData = {
           version: 1,
           theme: prev?.theme ?? "system",
           boards: state.boards,
           lastOpenedBoardId: state.activeBoardId,
+          activeWorkspace: state.activeWorkspace,
+          lastOpenedBoardByCategory: state.lastOpenedBoardByCategory,
         };
+        return payload;
       }, userId);
       return;
     }
@@ -315,7 +564,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const raw = appData.boards ?? [];
     let memoOrd = 0;
     let thinkOrd = 0;
-    const boards: Board[] = raw.map((b) => {
+    let topicOrd = 0;
+    const boardsMapped: Board[] = raw.map((b) => {
       const bb = b as Board & { groups?: Group[] };
       const category = bb.category ?? "memo_schedule";
       const sidebarOrder =
@@ -323,34 +573,124 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
           ? bb.sidebarOrder
           : category === "thinking"
             ? thinkOrd++
-            : memoOrd++;
+            : category === "topic_notes"
+              ? topicOrd++
+              : memoOrd++;
       return {
         ...bb,
-        groups: bb.groups ?? [],
+        groups: Array.isArray(bb.groups) ? bb.groups : [],
+        modules: Array.isArray(bb.modules) ? bb.modules : [],
+        connections: Array.isArray(bb.connections) ? bb.connections : [],
         category,
         sidebarOrder,
       };
     });
 
-    // 마지막 열었던 보드 복원 (보드가 실제로 존재하는지 확인)
-    const savedId = appData.lastOpenedBoardId;
-    const activeBoardId =
-      (savedId && boards.find((b) => b.id === savedId))
-        ? savedId
-        : boards[0]?.id ?? null;
+    const boardsNormalized = normalizeBoardsForClient(boardsMapped);
+    const repaired = repairMisclassifiedTopicNotesBoards(boardsNormalized);
+    const didRepairCategory = boardsNormalized.some(
+      (b, i) => normalizeBoardCategory(b) !== normalizeBoardCategory(repaired[i]!)
+    );
+    const legacyTopic = hasLegacyTopicGroupedBoard(repaired);
+    let boards = migrateLegacyTopicGroupedBoards(repaired);
+    const claudeBrand = applyClaudeMemoBrandingMigration(boards, getTimestamp());
+    if (claudeBrand.changed) boards = claudeBrand.boards;
+    const didClaudeBrandingMigrate = claudeBrand.changed;
 
-    set({ boards, activeBoardId });
+    const ensuredLocal =
+      boards.length > 0
+        ? ensureTopicNotesCanonicalPair(boards, getTimestamp(), uuidv4)
+        : { boards, changed: false };
+    if (ensuredLocal.changed) boards = ensuredLocal.boards;
+    const didEnsureTopicPair = ensuredLocal.changed;
+
+    const recoveredLocal = recoverCanonicalTopicNotesFromMemoScheduleBoards(
+      boards,
+      getTimestamp()
+    );
+    if (recoveredLocal.changed) boards = recoveredLocal.boards;
+    const didRecoverTopicMemos = recoveredLocal.changed;
+
+    const lastBy: Partial<Record<BoardCategory, string>> = {
+      ...(appData.lastOpenedBoardByCategory ?? {}),
+    };
+    const savedId = appData.lastOpenedBoardId;
+    let activeBoardId: string | null =
+      savedId && boards.some((b) => b.id === savedId) ? savedId : null;
+
+    let activeWorkspace: BoardCategory =
+      appData.activeWorkspace === "memo_schedule" ||
+      appData.activeWorkspace === "thinking" ||
+      appData.activeWorkspace === "topic_notes"
+        ? appData.activeWorkspace
+        : "memo_schedule";
+
+    if (activeBoardId) {
+      const br = boards.find((b) => b.id === activeBoardId);
+      if (br) activeWorkspace = normalizeBoardCategory(br);
+    } else {
+      activeBoardId = pickBoardInWorkspace(
+        boards,
+        activeWorkspace,
+        lastBy[activeWorkspace]
+      );
+    }
+
+    if (!activeBoardId && boards.length > 0) {
+      for (const w of ["memo_schedule", "thinking", "topic_notes"] as const) {
+        const id = pickBoardInWorkspace(boards, w, lastBy[w]);
+        if (id) {
+          activeWorkspace = w;
+          activeBoardId = id;
+          break;
+        }
+      }
+    }
+
+    if (activeBoardId) {
+      const br = boards.find((b) => b.id === activeBoardId);
+      if (br) lastBy[normalizeBoardCategory(br)] = activeBoardId;
+    }
+
+    set({
+      boards,
+      activeBoardId,
+      activeWorkspace,
+      lastOpenedBoardByCategory: lastBy,
+    });
 
     debouncedSave = createDebouncedSave(() => {
       const state = get();
       const prev = loadAppDataForUser(userId);
-      return {
+      const payload: AppData = {
         version: 1,
         theme: prev?.theme ?? "system",
         boards: state.boards,
         lastOpenedBoardId: state.activeBoardId,
+        activeWorkspace: state.activeWorkspace,
+        lastOpenedBoardByCategory: state.lastOpenedBoardByCategory,
       };
+      return payload;
     }, userId);
+
+    if (
+      legacyTopic ||
+      didRepairCategory ||
+      didEnsureTopicPair ||
+      didRecoverTopicMemos ||
+      didClaudeBrandingMigrate
+    ) {
+      const state = get();
+      const prev = loadAppDataForUser(userId);
+      saveAppDataForUser(userId, {
+        version: 1,
+        theme: prev?.theme ?? "system",
+        boards: state.boards,
+        lastOpenedBoardId: state.activeBoardId,
+        activeWorkspace: state.activeWorkspace,
+        lastOpenedBoardByCategory: state.lastOpenedBoardByCategory,
+      });
+    }
   },
 
   resetForLogout() {
@@ -359,21 +699,29 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     set({
       boards: [],
       activeBoardId: null,
+      activeWorkspace: "memo_schedule",
+      lastOpenedBoardByCategory: {},
       focusGroupId: null,
       focusModuleId: null,
       pendingGroupInvite: null,
       _history: [],
+      canvasInnerByBoardId: {},
     });
   },
 
   async hydrateFromSupabase(userId: string) {
     const supabase = createClient();
 
-    const { data: boardRows } = await supabase
+    const { data: boardRows, error: boardErr } = await supabase
       .from("boards")
       .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: true });
+
+    if (boardErr) {
+      console.error("[MindCanvas] hydrateFromSupabase boards:", boardErr.message);
+      return;
+    }
 
     if (!boardRows || boardRows.length === 0) {
       // 로그인 첫 사용: localStorage 데이터를 Supabase로 마이그레이션
@@ -384,30 +732,45 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       return;
     }
 
-    const { data: moduleRows } = await supabase
+    const { data: moduleRows, error: moduleErr } = await supabase
       .from("modules")
       .select("*")
       .eq("user_id", userId);
 
-    const { data: connectionRows } = await supabase
+    if (moduleErr) {
+      console.error("[MindCanvas] hydrateFromSupabase modules:", moduleErr.message);
+      return;
+    }
+
+    const { data: connectionRows, error: connErr } = await supabase
       .from("connections")
       .select("*")
       .eq("user_id", userId);
 
-    const { data: groupRows } = await supabase
+    if (connErr) {
+      console.error("[MindCanvas] hydrateFromSupabase connections:", connErr.message);
+      return;
+    }
+
+    const { data: groupRows, error: groupErr } = await supabase
       .from("groups")
       .select("*")
       .eq("user_id", userId);
 
-    const boards: Board[] = boardRows.map((b) => ({
+    if (groupErr) {
+      console.error("[MindCanvas] hydrateFromSupabase groups:", groupErr.message);
+      return;
+    }
+
+    const boardsFromDb: Board[] = boardRows.map((b) => ({
       id: b.id,
       name: b.name,
       icon: b.icon,
       color: b.color,
-      category:
-        (b as { board_category?: string }).board_category === "thinking"
-          ? "thinking"
-          : "memo_schedule",
+      category: boardCategoryFromDb(
+        (b as { board_category?: string; boardCategory?: string }).board_category ??
+          (b as { board_category?: string; boardCategory?: string }).boardCategory
+      ),
       sidebarOrder:
         typeof (b as { sidebar_order?: number }).sidebar_order === "number"
           ? (b as { sidebar_order: number }).sidebar_order
@@ -417,63 +780,76 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       updatedAt: b.updated_at,
       modules: (moduleRows ?? [])
         .filter((m) => m.board_id === b.id)
-        .map((m) => ({
-          id: m.id,
-          type: m.type as Module["type"],
-          position: m.position as Module["position"],
-          size: m.size as Module["size"],
-          zIndex: typeof m.z_index === "number" ? m.z_index : 0,
-          color: m.color as Module["color"],
-          isExpanded: m.is_expanded,
-          isMinimized: m.is_minimized ?? false,
-          data: m.data as Module["data"],
-          createdAt: m.created_at,
-          updatedAt: m.updated_at,
-        })),
+        .map((m) =>
+          mapModuleFromSupabaseRow({
+            id: m.id,
+            type: m.type as string,
+            position: m.position as Module["position"],
+            size: m.size as Module["size"],
+            z_index: m.z_index as number | null,
+            color: m.color as string,
+            is_expanded: m.is_expanded as boolean,
+            is_minimized: m.is_minimized,
+            data: m.data as Module["data"],
+            created_at: m.created_at as string,
+            updated_at: m.updated_at as string,
+          })
+        ),
       connections: (connectionRows ?? [])
         .filter((c) => c.board_id === b.id)
-        .map((c) => ({
-          id: c.id,
-          fromModuleId: c.from_module_id,
-          toModuleId: c.to_module_id,
-          fromAnchor: c.from_anchor as Connection["fromAnchor"],
-          toAnchor: c.to_anchor as Connection["toAnchor"],
-          label: c.label,
-          style: c.style as Connection["style"],
-          color: c.color,
-        })),
+        .map((c) =>
+          mapConnectionFromSupabaseRow({
+            id: c.id,
+            from_module_id: c.from_module_id as string,
+            to_module_id: c.to_module_id as string,
+            from_anchor: c.from_anchor as Connection["fromAnchor"],
+            to_anchor: c.to_anchor as Connection["toAnchor"],
+            label: (c.label as string | null) ?? null,
+            style: (c.style as Connection["style"] | null) ?? null,
+            color: (c.color as string | null) ?? null,
+          })
+        ),
       groups: (groupRows ?? [])
         .filter((g) => g.board_id === b.id)
-        .map((g) => {
-          const row = g as {
-            map_template_id?: string | null;
-            map_pivot?: { x: number; y: number } | null;
-            map_scale?: number | null;
-          };
-          const mt = row.map_template_id;
-          return {
+        .map((g) =>
+          mapGroupFromSupabaseRow({
             id: g.id,
             name: g.name,
-            moduleIds: g.module_ids as string[],
+            module_ids: g.module_ids as string[],
             position: g.position as Group["position"],
             size: g.size as Group["size"],
             color: g.color as Group["color"],
-            isCollapsed: g.is_collapsed,
-            createdAt: g.created_at,
-            updatedAt: g.updated_at,
-            ...(mt
-              ? {
-                  mapTemplateId: mt as BrainstormMapType,
-                  mapPivot: row.map_pivot ?? undefined,
-                  mapScale:
-                    typeof row.map_scale === "number" && row.map_scale > 0
-                      ? row.map_scale
-                      : undefined,
-                }
-              : {}),
-          } satisfies Group;
-        }),
+            is_collapsed: g.is_collapsed,
+            created_at: g.created_at,
+            updated_at: g.updated_at,
+            map_template_id: (g as { map_template_id?: string | null }).map_template_id,
+            map_pivot: (g as { map_pivot?: { x: number; y: number } | null }).map_pivot,
+            map_scale: (g as { map_scale?: number | null }).map_scale,
+          })
+        ),
     }));
+
+    const boardsFromDbNorm = normalizeBoardsForClient(boardsFromDb);
+    const repairedDb = repairMisclassifiedTopicNotesBoards(boardsFromDbNorm);
+    const didRepairCategory = boardsFromDbNorm.some(
+      (b, i) => normalizeBoardCategory(b) !== normalizeBoardCategory(repairedDb[i]!)
+    );
+    const legacyTopic = hasLegacyTopicGroupedBoard(repairedDb);
+    let boards = migrateLegacyTopicGroupedBoards(repairedDb);
+    const claudeBrandRemote = applyClaudeMemoBrandingMigration(boards, getTimestamp());
+    if (claudeBrandRemote.changed) boards = claudeBrandRemote.boards;
+    const didClaudeBrandingMigrateRemote = claudeBrandRemote.changed;
+
+    const ensuredRemote = ensureTopicNotesCanonicalPair(boards, getTimestamp(), uuidv4);
+    if (ensuredRemote.changed) boards = ensuredRemote.boards;
+    const didEnsureTopicPair = ensuredRemote.changed;
+
+    const recoveredRemote = recoverCanonicalTopicNotesFromMemoScheduleBoards(
+      boards,
+      getTimestamp()
+    );
+    if (recoveredRemote.changed) boards = recoveredRemote.boards;
+    const didRecoverTopicMemos = recoveredRemote.changed;
 
     // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
     const currentActiveBoardId = get().activeBoardId;
@@ -482,20 +858,198 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         ? currentActiveBoardId
         : boards[0]?.id ?? null;
 
+    const restoredBoard = restoredId
+      ? boards.find((b) => b.id === restoredId)
+      : undefined;
+    const ws = restoredBoard
+      ? normalizeBoardCategory(restoredBoard)
+      : get().activeWorkspace;
+    const prevBy = get().lastOpenedBoardByCategory;
+    const lastOpenedBoardByCategory: Partial<Record<BoardCategory, string>> = {
+      ...prevBy,
+      ...(restoredId && restoredBoard
+        ? { [normalizeBoardCategory(restoredBoard)]: restoredId }
+        : {}),
+    };
+
     set({
       boards,
       activeBoardId: restoredId,
+      activeWorkspace: ws,
+      lastOpenedBoardByCategory,
     });
 
     // Supabase 기준 데이터로 localStorage도 갱신
     debouncedSave?.();
+
+    if (
+      legacyTopic ||
+      didRepairCategory ||
+      didEnsureTopicPair ||
+      didRecoverTopicMemos ||
+      didClaudeBrandingMigrateRemote
+    ) {
+      await get().syncToSupabase(userId);
+    }
+  },
+
+  async repairEmptyBoardsFromSupabase(userId: string) {
+    const supabase = createClient();
+
+    const { data: moduleRows } = await supabase
+      .from("modules")
+      .select("*")
+      .eq("user_id", userId);
+    const { data: connectionRows } = await supabase
+      .from("connections")
+      .select("*")
+      .eq("user_id", userId);
+    const { data: groupRows } = await supabase
+      .from("groups")
+      .select("*")
+      .eq("user_id", userId);
+
+    if (
+      !(moduleRows ?? []).length &&
+      !(connectionRows ?? []).length &&
+      !(groupRows ?? []).length
+    ) {
+      return;
+    }
+
+    set((state) => ({
+      boards: state.boards.map((b) => {
+        const fromDbMods = (moduleRows ?? [])
+          .filter((m) => m.board_id === b.id)
+          .map((m) =>
+            mapModuleFromSupabaseRow({
+              id: m.id as string,
+              type: m.type as string,
+              position: m.position as Module["position"],
+              size: m.size as Module["size"],
+              z_index: m.z_index as number | null,
+              color: m.color as string,
+              is_expanded: m.is_expanded as boolean,
+              is_minimized: m.is_minimized,
+              data: m.data as Module["data"],
+              created_at: m.created_at as string,
+              updated_at: m.updated_at as string,
+            })
+          );
+
+        const fromDbConns = (connectionRows ?? [])
+          .filter((c) => c.board_id === b.id)
+          .map((c) =>
+            mapConnectionFromSupabaseRow({
+              id: c.id as string,
+              from_module_id: c.from_module_id as string,
+              to_module_id: c.to_module_id as string,
+              from_anchor: c.from_anchor as Connection["fromAnchor"],
+              to_anchor: c.to_anchor as Connection["toAnchor"],
+              label: (c.label as string | null) ?? null,
+              style: (c.style as Connection["style"] | null) ?? null,
+              color: (c.color as string | null) ?? null,
+            })
+          );
+
+        const fromDbGroups = (groupRows ?? [])
+          .filter((g) => g.board_id === b.id)
+          .map((g) =>
+            mapGroupFromSupabaseRow({
+              id: g.id as string,
+              name: g.name as string,
+              module_ids: g.module_ids as string[],
+              position: g.position as Group["position"],
+              size: g.size as Group["size"],
+              color: g.color as Group["color"],
+              is_collapsed: g.is_collapsed as boolean,
+              created_at: g.created_at as string,
+              updated_at: g.updated_at as string,
+              map_template_id: (g as { map_template_id?: string | null }).map_template_id,
+              map_pivot: (g as { map_pivot?: { x: number; y: number } | null }).map_pivot,
+              map_scale: (g as { map_scale?: number | null }).map_scale,
+            })
+          );
+
+        const mc = (b.modules ?? []).length;
+        const cc = (b.connections ?? []).length;
+        const gc = (b.groups ?? []).length;
+
+        if (
+          fromDbMods.length === 0 &&
+          fromDbConns.length === 0 &&
+          fromDbGroups.length === 0
+        ) {
+          return b;
+        }
+
+        const localModsEmpty = mc === 0 && fromDbMods.length > 0;
+        const dbHasMoreModules = fromDbMods.length > mc;
+        const healConnections =
+          fromDbConns.length > 0 && (cc === 0 || fromDbConns.length > cc);
+        const dbHasMoreGroups = fromDbGroups.length > gc;
+
+        if (
+          !localModsEmpty &&
+          !dbHasMoreModules &&
+          !healConnections &&
+          !dbHasMoreGroups
+        ) {
+          return b;
+        }
+
+        if (localModsEmpty || dbHasMoreModules) {
+          return normalizeBoardForClient({
+            ...b,
+            modules: fromDbMods,
+            connections: fromDbConns,
+            groups: fromDbGroups,
+          });
+        }
+
+        return normalizeBoardForClient({
+          ...b,
+          modules: b.modules ?? [],
+          connections: healConnections ? fromDbConns : (b.connections ?? []),
+          groups: dbHasMoreGroups ? fromDbGroups : (b.groups ?? []),
+        });
+      }),
+    }));
+
+    debouncedSave?.();
+  },
+
+  async recoverFromBrowserCaches(userId: string) {
+    const before = get().boards;
+    const snapMap = collectSnapshotsForMerge(userId);
+    const merged = mergeHydratedBoardsWithSnapshotMap(
+      before.map((b) => normalizeBoardForClient(b)),
+      snapMap
+    );
+    const mergedNorm = normalizeBoardsForClient(merged);
+    if (boardsChildrenSignature(before) === boardsChildrenSignature(mergedNorm)) {
+      return false;
+    }
+
+    const prevM = before.reduce((n, b) => n + (b.modules ?? []).length, 0);
+    const nextM = mergedNorm.reduce((n, b) => n + (b.modules ?? []).length, 0);
+    const prevC = before.reduce((n, b) => n + (b.connections ?? []).length, 0);
+    const nextC = mergedNorm.reduce((n, b) => n + (b.connections ?? []).length, 0);
+    console.info(
+      `[MindCanvas] localStorage 복구: 모듈 ${prevM}→${nextM}, 연결 ${prevC}→${nextC} — Supabase에 다시 저장합니다.`
+    );
+
+    set({ boards: mergedNorm });
+    debouncedSave?.();
+    await get().syncToSupabase(userId);
+    return true;
   },
 
   async syncToSupabase(userId: string) {
     const supabase = createClient();
     const { boards } = get();
     for (const board of boards) {
-      await pushBoardToSupabase(supabase, userId, board);
+      await pushBoardToSupabase(supabase, userId, normalizeBoardForClient(board));
     }
   },
 
@@ -562,10 +1116,50 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   addBoard(boardInput) {
     const now = getTimestamp();
     const category = boardInput.category ?? "memo_schedule";
+
+    if (category === "topic_notes") {
+      set((s) => {
+        const ens = ensureTopicNotesCanonicalPair(s.boards, now, () => uuidv4());
+        let boards = ens.boards;
+        const rec = recoverCanonicalTopicNotesFromMemoScheduleBoards(boards, now);
+        if (rec.changed) boards = rec.boards;
+        const sidebarOrder =
+          typeof boardInput.sidebarOrder === "number"
+            ? boardInput.sidebarOrder
+            : nextSidebarOrder(boards, category);
+        const newBoard: Board = {
+          ...boardInput,
+          category,
+          sidebarOrder,
+          id: uuidv4(),
+          createdAt: now,
+          updatedAt: now,
+          modules: [],
+          connections: [],
+          groups: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+        };
+        boards = normalizeTopicSidebarOrders([...boards, newBoard]);
+        return {
+          boards,
+          activeBoardId: newBoard.id,
+          activeWorkspace: category,
+          lastOpenedBoardByCategory: {
+            ...s.lastOpenedBoardByCategory,
+            [category]: newBoard.id,
+          },
+        };
+      });
+      debouncedSave?.();
+      debouncedSupabaseSync?.();
+      return;
+    }
+
     const sidebarOrder =
       typeof boardInput.sidebarOrder === "number"
         ? boardInput.sidebarOrder
         : nextSidebarOrder(get().boards, category);
+
     const newBoard: Board = {
       ...boardInput,
       category,
@@ -582,6 +1176,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     set((state) => ({
       boards: [...state.boards, newBoard],
       activeBoardId: newBoard.id,
+      activeWorkspace: category,
+      lastOpenedBoardByCategory: {
+        ...state.lastOpenedBoardByCategory,
+        [category]: newBoard.id,
+      },
     }));
 
     debouncedSave?.();
@@ -590,13 +1189,31 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   removeBoard(boardId) {
     set((state) => {
+      const removed = state.boards.find((b) => b.id === boardId);
       const newBoards = state.boards.filter((b) => b.id !== boardId);
-      const newActiveBoardId =
-        state.activeBoardId === boardId
-          ? (newBoards[newBoards.length - 1]?.id ?? null)
-          : state.activeBoardId;
+      let newActiveBoardId = state.activeBoardId;
+      let newWorkspace = state.activeWorkspace;
 
-      return { boards: newBoards, activeBoardId: newActiveBoardId };
+      if (state.activeBoardId === boardId) {
+        const cat = removed ? normalizeBoardCategory(removed) : state.activeWorkspace;
+        const sameCat = newBoards
+          .filter((b) => normalizeBoardCategory(b) === cat)
+          .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+        newActiveBoardId =
+          sameCat[sameCat.length - 1]?.id ??
+          newBoards[newBoards.length - 1]?.id ??
+          null;
+        if (newActiveBoardId) {
+          const nb = newBoards.find((b) => b.id === newActiveBoardId);
+          newWorkspace = nb ? normalizeBoardCategory(nb) : cat;
+        }
+      }
+
+      return {
+        boards: newBoards,
+        activeBoardId: newActiveBoardId,
+        activeWorkspace: newWorkspace,
+      };
     });
 
     debouncedSave?.();
@@ -618,8 +1235,88 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   },
 
   setActiveBoard(boardId) {
-    set({ activeBoardId: boardId });
+    set((state) => {
+      const board = state.boards.find((b) => b.id === boardId);
+      const cat = board ? normalizeBoardCategory(board) : state.activeWorkspace;
+      return {
+        activeBoardId: boardId,
+        activeWorkspace: cat,
+        lastOpenedBoardByCategory: {
+          ...state.lastOpenedBoardByCategory,
+          [cat]: boardId,
+        },
+      };
+    });
     debouncedSave?.();
+  },
+
+  setActiveWorkspace(workspace) {
+    set((state) => {
+      const repaired = repairMisclassifiedTopicNotesBoards(state.boards);
+      const topicFixed = repaired.some(
+        (b, i) =>
+          normalizeBoardCategory(state.boards[i]!) !== normalizeBoardCategory(b)
+      );
+      let boards = topicFixed ? repaired : state.boards;
+      let ensuredChanged = false;
+      if (workspace === "topic_notes") {
+        const ens = ensureTopicNotesCanonicalPair(boards, getTimestamp(), () => uuidv4());
+        if (ens.changed) {
+          boards = ens.boards;
+          ensuredChanged = true;
+        }
+        const rec = recoverCanonicalTopicNotesFromMemoScheduleBoards(
+          boards,
+          getTimestamp()
+        );
+        if (rec.changed) {
+          boards = rec.boards;
+          ensuredChanged = true;
+        }
+      }
+      const list = boards
+        .filter((b) => normalizeBoardCategory(b) === workspace)
+        .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+      const pref = state.lastOpenedBoardByCategory[workspace];
+      const nextId =
+        pref && list.some((b) => b.id === pref) ? pref : list[0]?.id ?? null;
+      return {
+        ...(topicFixed || ensuredChanged ? { boards } : {}),
+        activeWorkspace: workspace,
+        activeBoardId: nextId,
+      };
+    });
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
+  },
+
+  seedTopicNotesDefaults() {
+    const now = getTimestamp();
+    set((state) => {
+      const { boards: afterEnsure, changed } = ensureTopicNotesCanonicalPair(
+        state.boards,
+        now,
+        () => uuidv4()
+      );
+      let boards = afterEnsure;
+      const rec = recoverCanonicalTopicNotesFromMemoScheduleBoards(boards, now);
+      if (rec.changed) boards = rec.boards;
+      const list = boards
+        .filter((b) => normalizeBoardCategory(b) === "topic_notes")
+        .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+      const firstId = list[0]?.id ?? null;
+      return {
+        ...(changed || rec.changed ? { boards } : {}),
+        activeWorkspace: "topic_notes",
+        activeBoardId: firstId,
+        lastOpenedBoardByCategory: {
+          ...state.lastOpenedBoardByCategory,
+          topic_notes: firstId ?? state.lastOpenedBoardByCategory.topic_notes,
+        },
+      };
+    });
+    debouncedSave?.();
+    debouncedSupabaseSync?.();
   },
 
   // ─── 모듈 CRUD ─────────────────────────────────────────────────────────
@@ -754,9 +1451,16 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const pathStyle = options?.pathStyle ?? "bezier";
 
     const GAP = 56;
-    const nw = 260;
+    const topicWide = normalizeBoardCategory(board) === "topic_notes";
+    const nw =
+      source.type === "memo" && topicWide
+        ? Math.max(380, Math.min(720, Math.round(source.size.width)))
+        : 260;
     const nh = Math.round(
-      Math.min(480, Math.max(140, source.size.height < 100 ? 200 : source.size.height))
+      Math.min(
+        topicWide ? 560 : 480,
+        Math.max(140, source.size.height < 100 ? 200 : source.size.height)
+      )
     );
 
     const { position: p, size: s } = source;

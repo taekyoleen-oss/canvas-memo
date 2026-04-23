@@ -10,7 +10,7 @@ create table if not exists boards (
   icon        text not null default '📋',
   color       text not null default '#6366f1',
   board_category text not null default 'memo_schedule'
-    check (board_category in ('memo_schedule', 'thinking')),
+    check (board_category in ('memo_schedule', 'thinking', 'topic_notes')),
   sidebar_order int not null default 0,
   viewport    jsonb not null default '{"x":0,"y":0,"zoom":1}',
   created_at  timestamptz not null default now(),

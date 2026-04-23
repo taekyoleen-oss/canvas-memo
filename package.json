@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "export:topic-notes": "node scripts/export-topic-notes-snapshot.mjs",
+    "import:topic-notes": "node scripts/import-topic-notes-snapshot.mjs",
+    "check:keys": "node scripts/check-main-keys.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

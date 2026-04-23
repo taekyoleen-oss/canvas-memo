@@ -220,6 +220,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const applyMapTemplate = useCanvasStore((s) => s.applyMapTemplate);
   const scaleMapTemplateGroup = useCanvasStore((s) => s.scaleMapTemplateGroup);
   const appendMapToolModule = useCanvasStore((s) => s.appendMapToolModule);
+  const setCanvasInnerSize = useCanvasStore((s) => s.setCanvasInnerSize);
   const cancelConnecting = useConnectionStore((s) => s.cancelConnecting);
   const updatePreviewPos = useConnectionStore((s) => s.updatePreviewPos);
   const connectionMode = useConnectionStore((s) => s.mode);
@@ -251,6 +252,20 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     minZoom: MIN_ZOOM,
     maxZoom: MAX_ZOOM,
   });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const report = () => {
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if (w > 0 && h > 0) setCanvasInnerSize(boardId, w, h);
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [boardId, setCanvasInnerSize]);
 
   // ── 라소(그룹 선택) 모드 ─────────────────────────────────────────
   const [lassoMode, setLassoMode] = useState(false);
@@ -810,22 +825,19 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     updateViewport(boardId, vp);
   }
 
-  if (!board) return null;
-
-  const isThinkingBoard = normalizeBoardCategory(board) === "thinking";
-
   const visibleMemoScheduleIds = useMemo(
-    () => visibleModuleIdsForCanvas(board),
+    () => (board ? visibleModuleIdsForCanvas(board) : null),
     [board]
   );
 
   const modulesForCanvas = useMemo(() => {
+    if (!board) return [];
     if (!visibleMemoScheduleIds) return board.modules;
     return board.modules.filter((m) => visibleMemoScheduleIds.has(m.id));
   }, [board, visibleMemoScheduleIds]);
 
   const activeMapContext = useMemo(() => {
-    if (lassoMode) return null;
+    if (!board || lassoMode) return null;
     const primaryId =
       selectedMultiIds.length > 0 ? selectedMultiIds[0] : selectedModuleId;
     if (!primaryId) return null;
@@ -835,6 +847,25 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     if (!grp?.mapTemplateId) return null;
     return { group: grp, templateId: grp.mapTemplateId };
   }, [board, lassoMode, selectedModuleId, selectedMultiIds]);
+
+  if (!board) {
+    return (
+      <div
+        className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center"
+        style={{ background: "var(--background)", color: "var(--text-secondary)" }}
+      >
+        <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
+          이 보드를 불러오지 못했어요
+        </p>
+        <p className="max-w-sm text-xs leading-relaxed">
+          주제별 보드가 메모/할일로 잘못 분류된 뒤 탭만 바꾼 경우 목록이 비어 보일 수 있어요. 상단에서
+          「주제별」을 다시 누르거나, 새로고침 후 사이드바에서 보드를 선택해 주세요.
+        </p>
+      </div>
+    );
+  }
+
+  const isThinkingBoard = normalizeBoardCategory(board) === "thinking";
 
   // 접힌 그룹에 속한 모듈 ID 목록 (렌더링 제외)
   const collapsedModuleIds = new Set(

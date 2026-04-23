@@ -17,7 +17,7 @@ export function isModuleTypeAllowedOnCategory(
   type: ModuleType,
   category: BoardCategory
 ): boolean {
-  if (category === "memo_schedule") {
+  if (category === "memo_schedule" || category === "topic_notes") {
     return MEMO_SCHEDULE_ALLOWED.has(type);
   }
   return true;
@@ -29,7 +29,8 @@ export function isModuleTypeAllowedOnBoard(type: ModuleType, board: Board): bool
 
 /** 메모·일정 보드에서 캔버스에 그릴 모듈 id (그 외 타입은 데이터에만 남을 수 있음) */
 export function visibleModuleIdsForCanvas(board: Board): Set<string> | null {
-  if (normalizeBoardCategory(board) !== "memo_schedule") return null;
+  const cat = normalizeBoardCategory(board);
+  if (cat !== "memo_schedule" && cat !== "topic_notes") return null;
   return new Set(
     board.modules.filter((m) => MEMO_SCHEDULE_ALLOWED.has(m.type)).map((m) => m.id)
   );

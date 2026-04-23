@@ -4,7 +4,7 @@ export function normalizeBoardCategory(board: Board): BoardCategory {
   return board.category ?? "memo_schedule";
 }
 
-/** 사이드바: 메모·일정 먼저, 생각정리 다음 — 각 섹션은 sidebarOrder 기준 */
+/** 사이드바: 메모·일정 먼저, 생각정리, 주제별 — 각 섹션은 sidebarOrder 기준 (레거시·전체 목록용) */
 export function sortBoardsForSidebar(boards: Board[]): Board[] {
   const memo = boards
     .filter((b) => normalizeBoardCategory(b) === "memo_schedule")
@@ -12,7 +12,20 @@ export function sortBoardsForSidebar(boards: Board[]): Board[] {
   const thinking = boards
     .filter((b) => normalizeBoardCategory(b) === "thinking")
     .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
-  return [...memo, ...thinking];
+  const topic = boards
+    .filter((b) => normalizeBoardCategory(b) === "topic_notes")
+    .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
+  return [...memo, ...thinking, ...topic];
+}
+
+/** 현재 워크스페이스(상단 탭)에 해당하는 보드만 sidebarOrder 기준 */
+export function boardsForWorkspace(
+  boards: Board[],
+  workspace: BoardCategory
+): Board[] {
+  return boards
+    .filter((b) => normalizeBoardCategory(b) === workspace)
+    .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
 }
 
 export function nextSidebarOrder(boards: Board[], category: BoardCategory): number {

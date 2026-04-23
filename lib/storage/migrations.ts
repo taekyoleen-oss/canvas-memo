@@ -1,4 +1,6 @@
-import { AppData } from "@/types";
+import type { AppData, Board, BoardCategory } from "@/types";
+import { normalizeBoardsForClient } from "@/lib/boardIntegrity";
+import { repairMisclassifiedTopicNotesBoards } from "@/lib/topicBoardSeed";
 
 /** 현재 앱 데이터 버전 */
 export const CURRENT_VERSION = 1;
@@ -60,8 +62,31 @@ function migrateV0toV1(data: Record<string, unknown>): Record<string, unknown> {
  * AppData 형태를 보장합니다.
  * 누락된 필드를 기본값으로 채웁니다.
  */
+const BOARD_CATEGORIES: readonly BoardCategory[] = [
+  "memo_schedule",
+  "thinking",
+  "topic_notes",
+];
+
 function ensureAppDataShape(data: Record<string, unknown>): AppData {
   const defaults = createDefaultAppData();
+
+  const rawWs = data.activeWorkspace;
+  const activeWorkspace =
+    rawWs === "memo_schedule" || rawWs === "thinking" || rawWs === "topic_notes"
+      ? rawWs
+      : undefined;
+
+  let lastOpenedBoardByCategory: AppData["lastOpenedBoardByCategory"];
+  const rawBy = data.lastOpenedBoardByCategory;
+  if (rawBy && typeof rawBy === "object" && !Array.isArray(rawBy)) {
+    const o = rawBy as Record<string, unknown>;
+    lastOpenedBoardByCategory = {};
+    for (const k of BOARD_CATEGORIES) {
+      const v = o[k];
+      if (typeof v === "string") lastOpenedBoardByCategory[k] = v;
+    }
+  }
 
   return {
     version:
@@ -70,10 +95,19 @@ function ensureAppDataShape(data: Record<string, unknown>): AppData {
       data.theme === "light" || data.theme === "dark" || data.theme === "system"
         ? data.theme
         : defaults.theme,
-    boards: Array.isArray(data.boards) ? data.boards : defaults.boards,
+    boards: normalizeBoardsForClient(
+      repairMisclassifiedTopicNotesBoards(
+        Array.isArray(data.boards) ? (data.boards as Board[]) : defaults.boards
+      )
+    ),
     lastOpenedBoardId:
       typeof data.lastOpenedBoardId === "string" || data.lastOpenedBoardId === null
         ? data.lastOpenedBoardId
         : defaults.lastOpenedBoardId,
+    ...(activeWorkspace ? { activeWorkspace } : {}),
+    ...(lastOpenedBoardByCategory &&
+    Object.keys(lastOpenedBoardByCategory).length > 0
+      ? { lastOpenedBoardByCategory }
+      : {}),
   };
 }

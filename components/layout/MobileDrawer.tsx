@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
-import { normalizeBoardCategory, sortBoardsForSidebar } from "@/lib/boardCategory";
-import {
-  loadCategoryCollapse,
-  saveCategoryCollapse,
-  type CategoryCollapseState,
-} from "@/lib/sidebarCategoryCollapse";
+import { boardsForWorkspace } from "@/lib/boardCategory";
 
 const GROUP_COLOR_DOT: Record<string, string> = {
-  yellow: "#fbbf24", pink: "#ec4899", teal: "#14b8a6",
-  blue: "#6366f1", purple: "#a855f7", orange: "#f97316",
+  yellow: "#fbbf24",
+  pink: "#ec4899",
+  teal: "#14b8a6",
+  blue: "#6366f1",
+  purple: "#a855f7",
+  orange: "#f97316",
 };
 
 interface MobileDrawerProps {
@@ -33,47 +32,36 @@ export default function MobileDrawer({
   onSelect,
   onAdd,
 }: MobileDrawerProps) {
+  const activeWorkspace = useCanvasStore((s) => s.activeWorkspace);
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const { user, signOut } = useAuthStore();
 
-  const sorted = useMemo(() => sortBoardsForSidebar(boards), [boards]);
-  const memoBoards = sorted.filter((b) => normalizeBoardCategory(b) === "memo_schedule");
-  const thinkingBoards = sorted.filter((b) => normalizeBoardCategory(b) === "thinking");
+  const workspaceBoards = useMemo(
+    () => boardsForWorkspace(boards, activeWorkspace),
+    [boards, activeWorkspace]
+  );
 
-  const [catCollapsed, setCatCollapsed] = useState<CategoryCollapseState>({
-    memo_schedule: false,
-    thinking: false,
-  });
+  const wsTitle =
+    activeWorkspace === "thinking"
+      ? "생각정리"
+      : activeWorkspace === "topic_notes"
+        ? "주제별"
+        : "메모/할일";
 
-  useEffect(() => {
-    setCatCollapsed(loadCategoryCollapse());
-  }, []);
-
-  function toggleCategoryCollapse(category: BoardCategory) {
-    setCatCollapsed((prev) => {
-      const next = { ...prev, [category]: !prev[category] };
-      saveCategoryCollapse(next);
-      return next;
-    });
-  }
-
-  const catLabel = (c: BoardCategory) =>
-    c === "thinking" ? "생각정리" : "메모 및 일정";
-
-  // 열릴 때 body 스크롤 잠금
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
     }
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [isOpen]);
 
   return (
     <>
-      {/* 백드롭 */}
       <div
         className="md:hidden fixed inset-0"
         style={{
@@ -86,7 +74,6 @@ export default function MobileDrawer({
         onClick={onClose}
       />
 
-      {/* 드로어 패널 */}
       <div
         className="md:hidden fixed top-0 left-0 h-full flex flex-col"
         style={{
@@ -101,7 +88,6 @@ export default function MobileDrawer({
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
       >
-        {/* 헤더 */}
         <div
           className="flex items-center justify-between flex-shrink-0"
           style={{
@@ -140,49 +126,24 @@ export default function MobileDrawer({
           </button>
         </div>
 
-        {/* 보드 목록 */}
         <div
           className="flex flex-col gap-0.5 flex-1 overflow-y-auto"
           style={{ padding: "8px" }}
         >
           <div
             className="flex items-center justify-between gap-2 px-2 pt-1"
-            style={{ marginBottom: 2 }}
+            style={{ marginBottom: 4 }}
           >
-            <button
-              type="button"
-              onClick={() => toggleCategoryCollapse("memo_schedule")}
-              className="flex items-center gap-1 min-w-0 flex-1 rounded-md"
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 2px",
-                textAlign: "left",
-              }}
-              title={
-                catCollapsed.memo_schedule
-                  ? `${catLabel("memo_schedule")} 목록 펼치기`
-                  : `${catLabel("memo_schedule")} 목록 감추기`
-              }
+            <span
+              className="truncate"
+              style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)" }}
             >
-              <span
-                style={{ fontSize: 10, color: "var(--text-muted)", width: 14, flexShrink: 0 }}
-                aria-hidden
-              >
-                {catCollapsed.memo_schedule ? "▶" : "▾"}
-              </span>
-              <span
-                className="truncate"
-                style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}
-              >
-                {catLabel("memo_schedule")}
-              </span>
-            </button>
+              {wsTitle} 보드
+            </span>
             <button
               type="button"
               onClick={() => {
-                onAdd("memo_schedule");
+                onAdd(activeWorkspace);
                 onClose();
               }}
               className="rounded-md flex-shrink-0"
@@ -195,13 +156,13 @@ export default function MobileDrawer({
                 color: "var(--primary)",
                 cursor: "pointer",
               }}
-              title={`${catLabel("memo_schedule")} 새 보드`}
+              title="새 보드"
             >
               +
             </button>
           </div>
-          {!catCollapsed.memo_schedule &&
-            memoBoards.map((board) => {
+
+          {workspaceBoards.map((board) => {
             const isActive = board.id === activeBoardId;
             const groups = board.groups ?? [];
             return (
@@ -212,15 +173,18 @@ export default function MobileDrawer({
                     minHeight: 48,
                     padding: "0 10px",
                     background: isActive ? "var(--primary-soft)" : "transparent",
-                    border: isActive
-                      ? "1px solid var(--primary)"
-                      : "1px solid transparent",
+                    border: isActive ? "1px solid var(--primary)" : "1px solid transparent",
                     cursor: "pointer",
                     transition: "background 150ms",
                   }}
-                  onClick={() => { onSelect(board.id); onClose(); }}
+                  onClick={() => {
+                    onSelect(board.id);
+                    onClose();
+                  }}
                 >
-                  <span style={{ fontSize: 22, width: 32, textAlign: "center", flexShrink: 0 }}>
+                  <span
+                    style={{ fontSize: 22, width: 32, textAlign: "center", flexShrink: 0 }}
+                  >
                     {board.icon}
                   </span>
                   <span
@@ -296,206 +260,30 @@ export default function MobileDrawer({
               </div>
             );
           })}
-          {!catCollapsed.memo_schedule && (
-            <button
-              type="button"
-              onClick={() => {
-                onAdd("memo_schedule");
-                onClose();
-              }}
-              className="flex items-center rounded-lg"
-              style={{
-                minHeight: 40,
-                padding: "0 10px",
-                background: "var(--surface-hover)",
-                border: "1px dashed var(--border)",
-                cursor: "pointer",
-                color: "var(--text-muted)",
-                fontSize: 13,
-                marginTop: 4,
-              }}
-            >
-              + 메모·일정 보드
-            </button>
-          )}
 
-          <div
-            className="flex items-center justify-between gap-2 px-2 pt-3"
-            style={{ marginBottom: 2 }}
+          <button
+            type="button"
+            onClick={() => {
+              onAdd(activeWorkspace);
+              onClose();
+            }}
+            className="flex items-center rounded-lg"
+            style={{
+              minHeight: 40,
+              padding: "0 10px",
+              background: "var(--surface-hover)",
+              border: "1px dashed var(--border)",
+              cursor: "pointer",
+              color: "var(--text-muted)",
+              fontSize: 13,
+              marginTop: 4,
+              marginBottom: 8,
+            }}
           >
-            <button
-              type="button"
-              onClick={() => toggleCategoryCollapse("thinking")}
-              className="flex items-center gap-1 min-w-0 flex-1 rounded-md"
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px 2px",
-                textAlign: "left",
-              }}
-              title={
-                catCollapsed.thinking
-                  ? `${catLabel("thinking")} 목록 펼치기`
-                  : `${catLabel("thinking")} 목록 감추기`
-              }
-            >
-              <span
-                style={{ fontSize: 10, color: "var(--text-muted)", width: 14, flexShrink: 0 }}
-                aria-hidden
-              >
-                {catCollapsed.thinking ? "▶" : "▾"}
-              </span>
-              <span
-                className="truncate"
-                style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}
-              >
-                {catLabel("thinking")}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onAdd("thinking");
-                onClose();
-              }}
-              className="rounded-md flex-shrink-0"
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                padding: "4px 10px",
-                border: "1px solid var(--border)",
-                background: "var(--surface-hover)",
-                color: "var(--accent)",
-                cursor: "pointer",
-              }}
-              title={`${catLabel("thinking")} 새 보드`}
-            >
-              +
-            </button>
-          </div>
-          {!catCollapsed.thinking &&
-            thinkingBoards.map((board) => {
-            const isActive = board.id === activeBoardId;
-            const groups = board.groups ?? [];
-            return (
-              <div key={board.id}>
-                <div
-                  className="flex items-center rounded-lg"
-                  style={{
-                    minHeight: 48,
-                    padding: "0 10px",
-                    background: isActive ? "var(--primary-soft)" : "transparent",
-                    border: isActive
-                      ? "1px solid var(--primary)"
-                      : "1px solid transparent",
-                    cursor: "pointer",
-                    transition: "background 150ms",
-                  }}
-                  onClick={() => { onSelect(board.id); onClose(); }}
-                >
-                  <span style={{ fontSize: 22, width: 32, textAlign: "center", flexShrink: 0 }}>
-                    {board.icon}
-                  </span>
-                  <span
-                    className="flex-1 truncate"
-                    style={{
-                      fontSize: 15,
-                      paddingLeft: 8,
-                      color: isActive ? "var(--primary)" : "var(--text-primary)",
-                      fontWeight: isActive ? 600 : 400,
-                    }}
-                  >
-                    {board.name}
-                  </span>
-                </div>
-
-                {isActive && groups.length > 0 && (
-                  <div style={{ paddingLeft: 14, marginTop: 2, marginBottom: 2 }}>
-                    {groups.map((g) => (
-                      <div
-                        key={g.id}
-                        className="flex items-center gap-2 rounded-md"
-                        style={{
-                          minHeight: 36,
-                          padding: "0 10px",
-                          cursor: "pointer",
-                          color: "var(--text-secondary)",
-                          fontSize: 13,
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFocusGroup(g.id);
-                          onClose();
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            background: GROUP_COLOR_DOT[g.color] ?? "#94a3b8",
-                            flexShrink: 0,
-                          }}
-                        />
-                        <span style={{ fontSize: 13, flexShrink: 0 }}>
-                          {g.isCollapsed ? "📁" : "📂"}
-                        </span>
-                        <span className="flex-1 truncate" style={{ fontWeight: 500 }}>
-                          {g.name}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateGroup(board.id, g.id, { isCollapsed: !g.isCollapsed });
-                            if (g.isCollapsed) setFocusGroup(g.id);
-                          }}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            cursor: "pointer",
-                            fontSize: 10,
-                            color: "var(--text-muted)",
-                            padding: "2px 4px",
-                            borderRadius: 4,
-                          }}
-                          title={g.isCollapsed ? "펼치기" : "접기"}
-                        >
-                          {g.isCollapsed ? "▶" : "▾"}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {!catCollapsed.thinking && (
-            <button
-              type="button"
-              onClick={() => {
-                onAdd("thinking");
-                onClose();
-              }}
-              className="flex items-center rounded-lg"
-              style={{
-                minHeight: 40,
-                padding: "0 10px",
-                background: "var(--surface-hover)",
-                border: "1px dashed var(--accent)",
-                cursor: "pointer",
-                color: "var(--text-secondary)",
-                fontSize: 13,
-                marginTop: 4,
-                marginBottom: 8,
-              }}
-            >
-              + 생각정리 보드
-            </button>
-          )}
+            + {wsTitle} 보드 추가
+          </button>
         </div>
 
-        {/* 하단: 유저 + 테마 */}
         <div
           className="flex flex-col flex-shrink-0"
           style={{ borderTop: "1px solid var(--border)" }}
@@ -505,10 +293,18 @@ export default function MobileDrawer({
               className="flex items-center justify-between"
               style={{ padding: "10px 16px", gap: 8 }}
             >
-              <div className="flex items-center gap-2 overflow-hidden" style={{ flex: 1, minWidth: 0 }}>
+              <div
+                className="flex items-center gap-2 overflow-hidden"
+                style={{ flex: 1, minWidth: 0 }}
+              >
                 <div
                   className="flex items-center justify-center rounded-full flex-shrink-0"
-                  style={{ width: 30, height: 30, background: "var(--primary-soft)", fontSize: 14 }}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    background: "var(--primary-soft)",
+                    fontSize: 14,
+                  }}
                 >
                   👤
                 </div>
@@ -555,7 +351,6 @@ export default function MobileDrawer({
               </a>
             </div>
           )}
-
         </div>
       </div>
     </>

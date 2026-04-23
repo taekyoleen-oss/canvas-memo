@@ -1,12 +1,18 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { Module, ModuleColor, ModuleShape } from "@/types";
 
 interface ModuleCardProps {
   module: Module;
   /** 생각정리 보드: 마름모·타원 등 복잡한 외곽 대신 네모/둥근 네모/원만 사용 */
   simpleExterior?: boolean;
+  /** 헤더 왼쪽 아이콘(이모지) — 주제별 노트 등 */
+  headerIconOverride?: string;
+  /** 제목 입력 placeholder */
+  titleInputPlaceholder?: string;
+  /** 헤더 제목(또는 제목 입력) 바로 오른쪽 — 예: 이미지 모듈 붙여넣기 */
+  headerTrailing?: ReactNode;
   isSelected?: boolean;
   isConnectingSource?: boolean;
   children: React.ReactNode;
@@ -16,6 +22,8 @@ interface ModuleCardProps {
   onTitleChange?: (title: string) => void;
   onFullView?: () => void;
   contentAreaHeight?: number; // 수동 리사이즈 시 콘텐츠 영역 고정 높이
+  /** 주제별 노트: 헤더에도 펼치기·전체보기(최소화 시에는 펼치기) */
+  topicNoteHeaderActions?: boolean;
 }
 
 const COLOR_MAP: Record<ModuleColor, string> = {
@@ -42,6 +50,9 @@ const MODULE_TYPE_ICON: Record<Module["type"], string> = {
 export default function ModuleCard({
   module,
   simpleExterior = false,
+  headerIconOverride,
+  titleInputPlaceholder,
+  headerTrailing,
   isSelected,
   isConnectingSource,
   children,
@@ -51,6 +62,7 @@ export default function ModuleCard({
   onTitleChange,
   onFullView,
   contentAreaHeight,
+  topicNoteHeaderActions = false,
 }: ModuleCardProps) {
   const isMinimized = !!module.isMinimized;
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
@@ -123,7 +135,9 @@ export default function ModuleCard({
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 15 }}>{MODULE_TYPE_ICON[module.type]}</span>
+        <span style={{ fontSize: 15 }}>
+          {headerIconOverride ?? MODULE_TYPE_ICON[module.type]}
+        </span>
         {module.isExpanded && !isMinimized && onTitleChange ? (
           <input
             type="text"
@@ -131,7 +145,7 @@ export default function ModuleCard({
             onChange={(e) => onTitleChange(e.target.value)}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            placeholder="제목"
+            placeholder={titleInputPlaceholder ?? "제목"}
             className="flex-1 text-sm font-medium bg-transparent outline-none min-w-0"
             style={{
               color: "var(--text-primary)",
@@ -152,6 +166,79 @@ export default function ModuleCard({
           >
             {getModuleTitle(module)}
           </span>
+        )}
+
+        {headerTrailing ? (
+          <div className="flex min-w-0 flex-shrink-0 items-center">{headerTrailing}</div>
+        ) : null}
+
+        {topicNoteHeaderActions && module.type === "memo" && (
+          <div className="flex flex-shrink-0 items-center gap-0.5">
+            {isMinimized ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleMinimize?.();
+                }}
+                className="rounded px-1.5 font-medium"
+                style={{
+                  height: 26,
+                  fontSize: 11,
+                  background: "var(--surface-hover)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text-primary)",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                펼치기
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleExpand?.();
+                  }}
+                  className="rounded px-1.5 font-medium"
+                  style={{
+                    height: 26,
+                    fontSize: 10,
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                  aria-label={module.isExpanded ? "접기" : "더보기"}
+                >
+                  {module.isExpanded ? "접기" : "펼치기"}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFullView?.();
+                  }}
+                  className="rounded px-1.5 font-medium"
+                  style={{
+                    height: 26,
+                    fontSize: 10,
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                  aria-label="전체 보기"
+                >
+                  전체보기
+                </button>
+              </>
+            )}
+          </div>
         )}
 
         {/* 메뉴 버튼 */}

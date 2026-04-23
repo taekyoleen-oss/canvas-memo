@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useCanvasStore } from "@/store/canvas";
 import { getAnchorPosition } from "@/lib/canvas/geometry";
@@ -118,6 +118,47 @@ export default function ConnectionLayer({
   const [draggingEndpoint, setDraggingEndpoint] = useState<DraggingEndpoint | null>(null);
   const [pendingGroupRemove, setPendingGroupRemove] = useState<{ groupId: string; groupName: string; moduleId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const panelDragRef = useRef<{
+    originCanvas: { x: number; y: number };
+    originClient: { x: number; y: number };
+  } | null>(null);
+
+  const handleEditPanelHeaderPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!editPanelPos) return;
+      e.stopPropagation();
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      panelDragRef.current = {
+        originCanvas: { ...editPanelPos },
+        originClient: { x: e.clientX, y: e.clientY },
+      };
+    },
+    [editPanelPos]
+  );
+
+  const handleEditPanelHeaderPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!panelDragRef.current) return;
+    e.stopPropagation();
+    const z = viewportRef.current.zoom;
+    const o = panelDragRef.current;
+    setEditPanelPos({
+      x: o.originCanvas.x + (e.clientX - o.originClient.x) / z,
+      y: o.originCanvas.y + (e.clientY - o.originClient.y) / z,
+    });
+  }, []);
+
+  const handleEditPanelHeaderPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!panelDragRef.current) return;
+    panelDragRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+  }, []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -507,9 +548,34 @@ export default function ConnectionLayer({
 
         const panelContent = (
           <>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div
+              data-no-pan="true"
+              onPointerDown={handleEditPanelHeaderPointerDown}
+              onPointerMove={handleEditPanelHeaderPointerMove}
+              onPointerUp={handleEditPanelHeaderPointerUp}
+              onPointerCancel={handleEditPanelHeaderPointerUp}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                cursor: "grab",
+                touchAction: "none",
+                userSelect: "none",
+                margin: "-4px -6px 0",
+                padding: "4px 6px 6px",
+                borderRadius: 10,
+              }}
+            >
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>연결선 편집</span>
-              <button onClick={closePanel} style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: "var(--surface)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>×</button>
+              <button
+                type="button"
+                data-no-pan="true"
+                onPointerDown={(ev) => ev.stopPropagation()}
+                onClick={closePanel}
+                style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: "var(--surface)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+              >
+                ×
+              </button>
             </div>
             <input type="text" value={conn.label ?? ""} onChange={(e) => updateConnection(boardId, conn.id, { label: e.target.value })}
               placeholder="라벨 입력 (선택)"

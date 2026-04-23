@@ -32,6 +32,104 @@ function applyCommand(command: string, value?: string) {
   }
 }
 
+function htmlEscapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function restoreRangeIn(el: HTMLElement, range: Range | null) {
+  el.focus();
+  if (!range) return;
+  const s = window.getSelection();
+  if (!s) return;
+  try {
+    s.removeAllRanges();
+    s.addRange(range);
+  } catch {
+    /* collapsed 범위가 DOM에서 사라진 경우 등 */
+  }
+}
+
+/** 선택 영역이 있으면 링크로 감싸고, 없으면 링크 한 줄 삽입 */
+function insertLinkFromPrompt() {
+  const el = document.activeElement as HTMLElement | null;
+  if (el?.getAttribute("contenteditable") !== "true") return;
+  const sel0 = window.getSelection();
+  const saved = sel0?.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
+  const raw = window.prompt("링크 URL (https://… 또는 mailto:)")?.trim();
+  if (!raw) return;
+  const href =
+    raw.startsWith("http://") ||
+    raw.startsWith("https://") ||
+    raw.startsWith("mailto:") ||
+    raw.startsWith("/")
+      ? raw
+      : `https://${raw}`;
+  restoreRangeIn(el, saved);
+  const sel = window.getSelection();
+  const label = (sel?.toString().trim() || raw).replace(/</g, "");
+  try {
+    document.execCommand("styleWithCSS", false, "true");
+    if (sel && sel.rangeCount > 0 && sel.toString().trim()) {
+      document.execCommand("createLink", false, href);
+    } else {
+      document.execCommand(
+        "insertHTML",
+        false,
+        `<a href="${htmlEscapeAttr(href)}" target="_blank" rel="noopener noreferrer">${htmlEscapeAttr(label)}</a>`
+      );
+    }
+    el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  } catch {}
+}
+
+function insertImageFromUrlPrompt() {
+  const el = document.activeElement as HTMLElement | null;
+  if (el?.getAttribute("contenteditable") !== "true") return;
+  const sel0 = window.getSelection();
+  const saved = sel0?.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
+  const url = window.prompt("이미지 URL (https://…)")?.trim();
+  if (!url) return;
+  const safe =
+    url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")
+      ? url
+      : `https://${url}`;
+  restoreRangeIn(el, saved);
+  applyCommand("insertImage", safe);
+}
+
+function insertImageFromFile() {
+  const el = document.activeElement as HTMLElement | null;
+  if (el?.getAttribute("contenteditable") !== "true") return;
+  const sel0 = window.getSelection();
+  const saved = sel0?.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = reader.result as string;
+      restoreRangeIn(el, saved);
+      try {
+        document.execCommand("styleWithCSS", false, "true");
+        document.execCommand("insertImage", false, src);
+      } catch {
+        document.execCommand(
+          "insertHTML",
+          false,
+          `<img src="${htmlEscapeAttr(src)}" alt="" style="max-width:100%;height:auto;border-radius:8px" />`
+        );
+      }
+      el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
 // ── 폰트 크기 정의 ───────────────────────────────────────────────────────────
 const FONT_SIZES: { label: string; value: string; display: number }[] = [
   { label: "소",   value: "1", display: 9  },
@@ -113,8 +211,16 @@ function Sep() {
   return <div style={{ width: 1, height: 20, background: "var(--border)", flexShrink: 0, margin: "0 2px" }} />;
 }
 
+export type RichTextToolbarVariant = "default" | "embedded";
+
+export interface RichTextToolbarProps {
+  /** embedded: 메모 카드·전체보기 안에 넣을 때 (높이·힌트 축소) */
+  variant?: RichTextToolbarVariant;
+}
+
 // ── 메인 툴바 ─────────────────────────────────────────────────────────────────
-export default function RichTextToolbar() {
+export default function RichTextToolbar({ variant = "default" }: RichTextToolbarProps) {
+  const isEmbedded = variant === "embedded";
   const isActive = useRichTextStore((s) => s.isEditorFocused);
 
   const [isBold, setIsBold]           = useState(false);
@@ -156,8 +262,8 @@ export default function RichTextToolbar() {
   // ── 버튼 스타일 ─────────────────────────────────────────────────────────
   function btnCss(active: boolean, extraStyle?: React.CSSProperties): React.CSSProperties {
     return {
-      height: 28,
-      minWidth: 28,
+      height: isEmbedded ? 26 : 28,
+      minWidth: isEmbedded ? 26 : 28,
       padding: "0 5px",
       borderRadius: 5,
       border: active ? "1.5px solid var(--primary)" : "1px solid transparent",
@@ -178,13 +284,14 @@ export default function RichTextToolbar() {
     <div
       data-no-pan="true"
       style={{
-        height: 40,
+        height: isEmbedded ? 36 : 40,
         background: "var(--surface)",
         borderBottom: "1px solid var(--border)",
+        borderRadius: isEmbedded ? 8 : 0,
         display: "flex",
         alignItems: "center",
         gap: 1,
-        padding: "0 10px",
+        padding: isEmbedded ? "0 6px" : "0 10px",
         flexShrink: 0,
         overflowX: "auto",
         overflowY: "hidden",
@@ -323,8 +430,71 @@ export default function RichTextToolbar() {
         </svg>
       </button>
 
+      <Sep />
+
+      {/* ── 목록 ── */}
+      <button
+        onMouseDown={(e) => { e.preventDefault(); applyCommand("insertUnorderedList"); }}
+        style={btnCss(false)}
+        title="글머리 기호 목록"
+      >
+        <span style={{ fontSize: 14, pointerEvents: "none" }}>•≡</span>
+      </button>
+      <button
+        onMouseDown={(e) => { e.preventDefault(); applyCommand("insertOrderedList"); }}
+        style={btnCss(false)}
+        title="번호 목록"
+      >
+        <span style={{ fontSize: 12, pointerEvents: "none", fontVariantNumeric: "tabular-nums" }}>1.</span>
+      </button>
+
+      <Sep />
+
+      {/* ── 링크 ── */}
+      <button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          insertLinkFromPrompt();
+        }}
+        style={btnCss(false)}
+        title="링크 삽입"
+      >
+        <span style={{ fontSize: 13, pointerEvents: "none" }}>🔗</span>
+      </button>
+      <button
+        onMouseDown={(e) => { e.preventDefault(); applyCommand("unlink"); }}
+        style={btnCss(false)}
+        title="링크 해제"
+      >
+        <span style={{ fontSize: 11, pointerEvents: "none" }}>🔗̸</span>
+      </button>
+
+      <Sep />
+
+      {/* ── 이미지 ── */}
+      <button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          insertImageFromFile();
+        }}
+        style={btnCss(false)}
+        title="이미지 파일 삽입"
+      >
+        <span style={{ fontSize: 13, pointerEvents: "none" }}>🖼</span>
+      </button>
+      <button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          insertImageFromUrlPrompt();
+        }}
+        style={btnCss(false)}
+        title="이미지 URL 삽입"
+      >
+        <span style={{ fontSize: 11, pointerEvents: "none" }}>URL</span>
+      </button>
+
       {/* ── 비활성 힌트 ── */}
-      {!isActive && (
+      {!isEmbedded && !isActive && (
         <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8, whiteSpace: "nowrap", flexShrink: 0 }}>
           메모 편집 시 활성화
         </span>

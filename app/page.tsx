@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
+import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
 import type { BoardCategory, ModuleType } from "@/types";
-import { normalizeBoardCategory } from "@/lib/boardCategory";
+import { boardsForWorkspace, normalizeBoardCategory } from "@/lib/boardCategory";
 import { isModuleTypeAllowedOnCategory } from "@/lib/boardModulePolicy";
+import { screenToCanvas } from "@/lib/canvas/geometry";
 import TopHeader from "@/components/layout/TopHeader";
 import BottomTabBar from "@/components/layout/BottomTabBar";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileDrawer from "@/components/layout/MobileDrawer";
+import WorkspaceSwitcher from "@/components/layout/WorkspaceSwitcher";
 import Canvas from "@/components/canvas/Canvas";
 import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
-import RichTextToolbar from "@/components/ui-overlays/RichTextToolbar";
 import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 
 interface AddBoardDialogProps {
@@ -36,18 +38,35 @@ function AddBoardDialog({
   useEffect(() => {
     if (!isOpen) return;
     setCategory(initialCategory);
-    setIcon(initialCategory === "thinking" ? "💡" : "📋");
+    setIcon(
+      initialCategory === "thinking"
+        ? "💡"
+        : initialCategory === "topic_notes"
+          ? "📓"
+          : "📋"
+    );
     setName("");
   }, [isOpen, initialCategory]);
 
   if (!isOpen) return null;
 
+  const canSubmit = category === "topic_notes" || !!name.trim();
+
+  const categoryLabel =
+    category === "memo_schedule"
+      ? "메모/할일"
+      : category === "thinking"
+        ? "생각정리"
+        : "주제별";
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!canSubmit) return;
     onConfirm(
-      name.trim(),
-      icon || (category === "thinking" ? "💡" : "📋"),
+      name.trim() ||
+        (category === "topic_notes" ? "주제별" : ""),
+      icon ||
+        (category === "thinking" ? "💡" : category === "topic_notes" ? "📓" : "📋"),
       category
     );
     setName("");
@@ -75,11 +94,15 @@ function AddBoardDialog({
         >
           새 보드 만들기
         </h2>
-        <div className="flex rounded-lg p-0.5" style={{ background: "var(--surface-hover)" }}>
+        <div
+          className="flex flex-wrap rounded-lg p-0.5 gap-0.5"
+          style={{ background: "var(--surface-hover)" }}
+        >
           {(
             [
-              { id: "memo_schedule" as const, label: "메모 및 일정" },
+              { id: "memo_schedule" as const, label: "메모/할일" },
               { id: "thinking" as const, label: "생각정리" },
+              { id: "topic_notes" as const, label: "주제별" },
             ] as const
           ).map((tab) => (
             <button
@@ -87,9 +110,11 @@ function AddBoardDialog({
               type="button"
               onClick={() => {
                 setCategory(tab.id);
-                if (tab.id === "thinking") setIcon((ic) => (ic === "📋" ? "💡" : ic));
+                if (tab.id === "thinking") setIcon((ic) => (ic === "📋" || ic === "📓" ? "💡" : ic));
+                else if (tab.id === "topic_notes") setIcon((ic) => (ic === "📋" || ic === "💡" ? "📓" : ic));
+                else setIcon((ic) => (ic === "💡" || ic === "📓" ? "📋" : ic));
               }}
-              className="flex-1 rounded-md py-2 text-sm font-medium"
+              className="min-w-[30%] flex-1 rounded-md py-2 text-xs sm:text-sm font-medium"
               style={{
                 background: category === tab.id ? "var(--surface-elevated)" : "transparent",
                 color: category === tab.id ? "var(--primary)" : "var(--text-secondary)",
@@ -103,6 +128,28 @@ function AddBoardDialog({
             </button>
           ))}
         </div>
+        <div
+          className="rounded-lg px-3 py-2 text-xs font-medium"
+          style={{
+            background: "var(--surface-hover)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
+          }}
+        >
+          추가 영역: <span style={{ color: "var(--primary)" }}>{categoryLabel}</span>
+          {name.trim() ? (
+            <>
+              {" "}
+              · 이름: <span style={{ color: "var(--text-secondary)" }}>{name.trim()}</span>
+            </>
+          ) : null}
+        </div>
+        {category === "topic_notes" ? (
+          <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            「클로드」「커서 AI」 기본 두 보드는 이미 준비돼 있어요. 여기서 만드는 것은 그 아래에 붙는{" "}
+            <strong>새 주제별 보드 한 개</strong>예요. 이름·아이콘은 그 새 보드에만 적용돼요.
+          </p>
+        ) : null}
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="flex gap-2">
             <input
@@ -125,7 +172,9 @@ function AddBoardDialog({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="보드 이름"
+              placeholder={
+                category === "topic_notes" ? "이름(선택)" : "보드 이름"
+              }
               autoFocus
               className="flex-1 rounded-lg px-3"
               style={{
@@ -156,14 +205,14 @@ function AddBoardDialog({
             </button>
             <button
               type="submit"
-              disabled={!name.trim()}
+              disabled={!canSubmit}
               className="rounded-lg px-5 font-medium"
               style={{
                 height: 44,
-                background: name.trim() ? "var(--primary)" : "var(--border)",
-                color: name.trim() ? "var(--primary-fg)" : "var(--text-muted)",
+                background: canSubmit ? "var(--primary)" : "var(--border)",
+                color: canSubmit ? "var(--primary-fg)" : "var(--text-muted)",
                 border: "none",
-                cursor: name.trim() ? "pointer" : "not-allowed",
+                cursor: canSubmit ? "pointer" : "not-allowed",
                 fontSize: 14,
               }}
             >
@@ -181,11 +230,16 @@ export default function Home() {
   const {
     boards,
     activeBoardId,
+    activeWorkspace,
+    canvasInnerByBoardId,
     addBoard,
     addModule,
     setActiveBoard,
+    seedTopicNotesDefaults,
     hydrateForUser,
     hydrateFromSupabase,
+    repairEmptyBoardsFromSupabase,
+    recoverFromBrowserCaches,
     resetForLogout,
   } = useCanvasStore();
   const { user, loading: authLoading, init: initAuth } = useAuthStore();
@@ -204,7 +258,7 @@ export default function Home() {
     initAuth();
   }, [initAuth]);
 
-  // 로그인한 사용자만 계정별 로컬 캐시 로드 (비로그인 시 캔버스 데이터는 로드하지 않음)
+  // 로그인: 원격에 보드가 있으면 Supabase → repair → 로컬은 탭/마지막 보드만 병합(보드 그래프 덮어쓰기 방지)
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
@@ -212,16 +266,53 @@ export default function Home() {
       setAppReady(true);
       return;
     }
-    hydrateForUser(user.id);
-    setAppReady(true);
-  }, [user, authLoading, hydrateForUser, resetForLogout]);
 
-  // 로그인 상태에서 Supabase와 동기화
-  useEffect(() => {
-    if (!user || authLoading) return;
-    initSupabaseSync(user.id);
-    hydrateFromSupabase(user.id);
-  }, [user, authLoading, hydrateFromSupabase]);
+    let cancelled = false;
+    void (async () => {
+      initSupabaseSync(user.id);
+      const supabase = createClient();
+      const { count, error } = await supabase
+        .from("boards")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id);
+
+      if (cancelled) return;
+
+      const remoteHasBoards = !error && (count ?? 0) > 0;
+
+      if (remoteHasBoards) {
+        await hydrateFromSupabase(user.id);
+        if (cancelled) return;
+        await repairEmptyBoardsFromSupabase(user.id);
+        if (cancelled) return;
+        await recoverFromBrowserCaches(user.id);
+        if (cancelled) return;
+        hydrateForUser(user.id, { preferRemoteBoards: true });
+      } else {
+        hydrateForUser(user.id);
+        if (cancelled) return;
+        await hydrateFromSupabase(user.id);
+        if (cancelled) return;
+        await repairEmptyBoardsFromSupabase(user.id);
+        if (cancelled) return;
+        await recoverFromBrowserCaches(user.id);
+      }
+
+      if (!cancelled) setAppReady(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    user,
+    authLoading,
+    hydrateForUser,
+    hydrateFromSupabase,
+    repairEmptyBoardsFromSupabase,
+    recoverFromBrowserCaches,
+    resetForLogout,
+  ]);
 
   // 미들웨어가 없는 환경(로컬 env 미설정 등)에서도 비로그인 시 로그인으로 이동
   useEffect(() => {
@@ -276,6 +367,18 @@ export default function Home() {
     ? normalizeBoardCategory(activeBoard)
     : "memo_schedule";
 
+  const workspaceBoards = useMemo(
+    () => boardsForWorkspace(boards, activeWorkspace),
+    [boards, activeWorkspace]
+  );
+
+  const workspaceLabel =
+    activeWorkspace === "memo_schedule"
+      ? "메모/할일"
+      : activeWorkspace === "thinking"
+        ? "생각정리"
+        : "주제별";
+
   function handleAddBoard(
     name: string,
     icon: string,
@@ -284,7 +387,12 @@ export default function Home() {
     addBoard({
       name,
       icon,
-      color: category === "thinking" ? "#7C3AED" : "#6366F1",
+      color:
+        category === "thinking"
+          ? "#7C3AED"
+          : category === "topic_notes"
+            ? "#0d9488"
+            : "#6366F1",
       category,
     });
   }
@@ -299,7 +407,11 @@ export default function Home() {
     if (!isModuleTypeAllowedOnCategory(type, cat)) return;
     const defaultData =
       type === "memo"
-        ? { title: "새 메모", content: "", previewLines: 2 }
+        ? {
+            title: cat === "topic_notes" ? "노트" : "새 메모",
+            content: "",
+            previewLines: cat === "topic_notes" ? 6 : 2,
+          }
         : type === "schedule"
         ? { title: "새 일정", items: [], previewCount: 3 }
         : type === "brainstorm"
@@ -316,17 +428,27 @@ export default function Home() {
             cells: Array(9).fill(""),
           }
         : { title: "파일", fileName: "", fileType: "", fileSize: 0, src: "" };
-    const pos = position ?? {
-      x: 80 + Math.random() * 200,
-      y: 80 + Math.random() * 120,
-    };
     const boardForZ = boards.find((b) => b.id === activeBoardId);
     const maxZIndex =
       boardForZ?.modules.reduce((max, m) => Math.max(max, Number(m.zIndex) || 0), 0) ?? 0;
     const defaultSize =
       type === "table"
         ? { width: 360, height: 280 }
-        : { width: 260, height: 200 };
+        : cat === "topic_notes" && type === "memo"
+          ? { width: 620, height: 500 }
+          : { width: 260, height: 200 };
+    const pos =
+      position ??
+      (() => {
+        const brd = boards.find((b) => b.id === activeBoardId);
+        const vp = brd?.viewport ?? { x: 0, y: 0, zoom: 1 };
+        const inner = canvasInnerByBoardId[activeBoardId] ?? { w: 900, h: 560 };
+        const center = screenToCanvas(inner.w / 2, inner.h / 2, vp);
+        return {
+          x: Math.round(center.x - defaultSize.width / 2 + (Math.random() * 24 - 12)),
+          y: Math.round(center.y - defaultSize.height / 2 + (Math.random() * 24 - 12)),
+        };
+      })();
     addModule(activeBoardId, {
       type,
       position: pos,
@@ -364,9 +486,9 @@ export default function Home() {
             MindCanvas에 오신 걸 환영해요
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: 15 }}>
-            메모·일정 보드와 생각정리(브레인스토밍) 보드를 나눠 쓸 수 있어요.
+            메모/할일, 생각정리, 주제별(노트·명령 모음)을 탭으로 나눠 쓸 수 있어요.
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md justify-center">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3 w-full max-w-lg justify-center">
             <button
               type="button"
               onClick={() =>
@@ -383,7 +505,7 @@ export default function Home() {
                 boxShadow: "var(--shadow-md)",
               }}
             >
-              + 메모·일정 첫 보드
+              + 메모/할일
             </button>
             <button
               type="button"
@@ -401,7 +523,23 @@ export default function Home() {
                 boxShadow: "var(--shadow-md)",
               }}
             >
-              + 생각정리 첫 보드
+              + 생각정리
+            </button>
+            <button
+              type="button"
+              onClick={() => seedTopicNotesDefaults()}
+              className="rounded-xl px-6 font-semibold"
+              style={{
+                height: 52,
+                background: "var(--surface-elevated)",
+                color: "#0d9488",
+                border: "2px solid #0d9488",
+                cursor: "pointer",
+                fontSize: 15,
+                boxShadow: "var(--shadow-md)",
+              }}
+            >
+              + 주제별
             </button>
           </div>
         </div>
@@ -424,6 +562,7 @@ export default function Home() {
       >
         <TopHeader
           boardName={activeBoard?.name ?? "보드"}
+          workspaceLabel={workspaceLabel}
           onAddModule={() =>
             handleAddModule(
               activeBoardCategory === "thinking" ? "brainstorm" : "memo"
@@ -431,28 +570,37 @@ export default function Home() {
           }
           onMenuClick={() => setShowMobileDrawer(true)}
         />
-        {activeBoardId && (
-          <ModuleToolbar
-            boardCategory={activeBoardCategory}
-            onAdd={handleAddModule}
-            onSearch={() => setShowSearch(true)}
-          />
-        )}
-        {activeBoardId && <RichTextToolbar />}
-        <div className="flex-1 relative overflow-hidden">
+        <div
+          className="flex min-w-0 flex-shrink-0 flex-col border-b"
+          style={{
+            background: "var(--surface)",
+            borderColor: "var(--border)",
+          }}
+        >
+          <WorkspaceSwitcher />
           {activeBoardId ? (
+            <ModuleToolbar
+              boardCategory={activeBoardCategory}
+              onAdd={handleAddModule}
+              onSearch={() => setShowSearch(true)}
+            />
+          ) : null}
+        </div>
+        <div className="flex-1 relative overflow-hidden">
+            {activeBoardId ? (
             <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
           ) : (
-            <div className="flex items-center justify-center h-full">
-              <span style={{ color: "var(--text-muted)", fontSize: 14 }}>
-                하단에서 보드를 선택하세요
+            <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
+              <span style={{ color: "var(--text-muted)", fontSize: 14, textAlign: "center" }}>
+                이 탭에 아직 보드가 없어요. 하단 + 또는 메뉴에서 새 보드를 만드세요.
               </span>
             </div>
           )}
         </div>
         <BottomTabBar
-          boards={boards}
+          boards={workspaceBoards}
           activeBoardId={activeBoardId}
+          activeWorkspace={activeWorkspace}
           onSelect={setActiveBoard}
           onAdd={(category) =>
             setAddBoardState({ open: true, category })
@@ -473,22 +621,37 @@ export default function Home() {
             setAddBoardState({ open: true, category })
           }
         />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {activeBoardId && (
-            <ModuleToolbar
-              boardCategory={activeBoardCategory}
-              onAdd={handleAddModule}
-              onSearch={() => setShowSearch(true)}
-            />
-          )}
-          {activeBoardId && <RichTextToolbar />}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div
+            className="flex min-w-0 flex-shrink-0 flex-col"
+            style={{
+              background: "var(--surface)",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <WorkspaceSwitcher />
+            {activeBoardId ? (
+              <ModuleToolbar
+                boardCategory={activeBoardCategory}
+                onAdd={handleAddModule}
+                onSearch={() => setShowSearch(true)}
+              />
+            ) : (
+              <div
+                className="flex min-h-[48px] flex-1 items-center px-4 text-xs font-medium"
+                style={{ color: "var(--text-muted)" }}
+              >
+                좌측 사이드바에서 보드를 선택하세요
+              </div>
+            )}
+          </div>
           <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
               <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
             ) : (
-              <div className="flex items-center justify-center h-full">
-                <span style={{ color: "var(--text-muted)", fontSize: 14 }}>
-                  좌측에서 보드를 선택하세요
+              <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
+                <span style={{ color: "var(--text-muted)", fontSize: 14, textAlign: "center" }}>
+                  이 탭에 보드가 없습니다. 좌측 상단 + 로 새 보드를 추가하세요.
                 </span>
               </div>
             )}

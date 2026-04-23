@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import type {
+  Board,
   Module,
   MemoData,
   ScheduleData,
@@ -22,6 +23,7 @@ import ModuleCard from "./ModuleCard";
 import MemoModule from "./MemoModule";
 import ScheduleModule from "./ScheduleModule";
 import ImageModule from "./ImageModule";
+import ImageModuleHeaderPaste from "./ImageModuleHeaderPaste";
 import LinkModule from "./LinkModule";
 import FileModule from "./FileModule";
 import BrainstormModule, {
@@ -67,13 +69,16 @@ function getBestToAnchor(fromModule: Module, toModule: Module): AnchorSide {
 // ── 리사이즈 타입 ────────────────────────────────────────────────────────
 type ResizeType = "e" | "s" | "se";
 
-function connectionPeerTitle(other: Module | undefined): string {
+function connectionPeerTitle(other: Module | undefined, board?: Board | null): string {
   if (!other) return "모듈";
   const d = other.data as { title?: string; fileName?: string };
   if (typeof d.title === "string" && d.title.trim()) return d.title.trim();
   if (other.type === "file") return d.fileName || "파일";
   if (other.type === "link") return (other.data as LinkData).title || "링크";
-  if (other.type === "memo") return "메모";
+  if (other.type === "memo") {
+    if (board && normalizeBoardCategory(board) === "topic_notes") return "노트";
+    return "메모";
+  }
   if (other.type === "brainstorm") return "브레인스토밍";
   if (other.type === "schedule") return "일정";
   if (other.type === "table") return (other.data as TableData).title?.trim() || "표";
@@ -98,6 +103,8 @@ export default function ModuleCardWrapper({
   const expandAdjacentModule = useCanvasStore((s) => s.expandAdjacentModule);
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const thinkingBoard = board ? normalizeBoardCategory(board) === "thinking" : false;
+  const topicNoteBoard = board ? normalizeBoardCategory(board) === "topic_notes" : false;
+  const isTopicNoteMemo = topicNoteBoard && module.type === "memo";
 
   const brainstormCanvasLinks: BrainstormCanvasLinkSummary[] = useMemo(() => {
     if (module.type !== "brainstorm" || !board) return [];
@@ -109,7 +116,7 @@ export default function ModuleCardWrapper({
         const other = board.modules.find((m) => m.id === otherId);
         return {
           connectionId: c.id,
-          otherTitle: connectionPeerTitle(other),
+          otherTitle: connectionPeerTitle(other, board),
           label: c.label || "",
           outgoing: c.fromModuleId === module.id,
         };
@@ -126,6 +133,11 @@ export default function ModuleCardWrapper({
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const [isColorPaletteOpen, setIsColorPaletteOpen] = useState(false);
+  const [colorPalettePos, setColorPalettePos] = useState<{ x: number; y: number } | null>(null);
+  const colorPaletteDragRef = useRef<{
+    origin: { x: number; y: number };
+    client: { x: number; y: number };
+  } | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [showAnchors, setShowAnchors] = useState(false);
   /** 메모: 출력 앵커를 짧게 누른 방향에만 확장 화살표 표시 */
@@ -191,6 +203,20 @@ export default function ModuleCardWrapper({
   useEffect(() => {
     if (!isSelected) setMemoExpandAnchorSide(null);
   }, [isSelected]);
+
+  useLayoutEffect(() => {
+    if (!isColorPaletteOpen) {
+      setColorPalettePos(null);
+      colorPaletteDragRef.current = null;
+      return;
+    }
+    const approxW = 280;
+    const approxH = 220;
+    setColorPalettePos({
+      x: Math.max(12, Math.round(window.innerWidth / 2 - approxW / 2)),
+      y: Math.max(12, Math.round(window.innerHeight / 2 - approxH / 2)),
+    });
+  }, [isColorPaletteOpen]);
 
   const longPress = useLongPress(() => { setIsContextMenuOpen(true); });
 
@@ -380,12 +406,14 @@ export default function ModuleCardWrapper({
     onDeselect();
   }
 
+  /** 「내용만 복사」— 타입·data만 내부 클립보드에 저장 (붙여넣기용) */
   function handleCopy() {
     _moduleClipboard = { type: module.type, data: JSON.parse(JSON.stringify(module.data)) };
     forceUpdate((n) => n + 1);
     setIsContextMenuOpen(false);
   }
 
+  /** 「내용 붙여넣기」— 복사한 data로 같은 종류 새 모듈 (기본 크기) */
   function handlePaste() {
     if (!_moduleClipboard) return;
     const addModule = useCanvasStore.getState().addModule;
@@ -398,6 +426,11 @@ export default function ModuleCardWrapper({
       isExpanded: false,
       data: JSON.parse(JSON.stringify(_moduleClipboard.data)),
     });
+    setIsContextMenuOpen(false);
+  }
+
+  function handleDuplicateWholeModule() {
+    duplicateModule(boardId, module.id);
     setIsContextMenuOpen(false);
   }
 
@@ -438,7 +471,15 @@ export default function ModuleCardWrapper({
 
   function renderModuleContent() {
     switch (module.type) {
-      case "memo": return <MemoModule data={module.data as MemoData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
+      case "memo":
+        return (
+          <MemoModule
+            data={module.data as MemoData}
+            isExpanded={module.isExpanded}
+            onChange={handleDataChange}
+            variant={isTopicNoteMemo ? "note" : "default"}
+          />
+        );
       case "schedule": return <ScheduleModule data={module.data as ScheduleData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "image": return <ImageModule data={module.data as ImageData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
       case "link": return <LinkModule data={module.data as LinkData} isExpanded={module.isExpanded} onChange={handleDataChange} />;
@@ -541,6 +582,18 @@ export default function ModuleCardWrapper({
         <ModuleCard
           module={module}
           simpleExterior={thinkingBoard}
+          headerIconOverride={isTopicNoteMemo ? "📓" : undefined}
+          titleInputPlaceholder={isTopicNoteMemo ? "노트 제목" : undefined}
+          headerTrailing={
+            module.type === "image" ? (
+              <ImageModuleHeaderPaste
+                onApplyDataUrl={(src) =>
+                  handleDataChange({ ...(module.data as ImageData), src })
+                }
+              />
+            ) : undefined
+          }
+          topicNoteHeaderActions={isTopicNoteMemo}
           isSelected={isSelected}
           isConnectingSource={isConnectingSource}
           onContextMenu={(rect) => { setMenuAnchorRect(rect); setIsContextMenuOpen(true); }}
@@ -654,19 +707,84 @@ export default function ModuleCardWrapper({
             onClose={() => setIsContextMenuOpen(false)}
             onConnect={handleStartConnect}
             onColorChange={() => { setIsContextMenuOpen(false); setIsColorPaletteOpen(true); }}
-            onCopy={handleCopy}
-            onPaste={handlePaste}
+            onDuplicateModule={handleDuplicateWholeModule}
+            onCopyContent={handleCopy}
+            onPasteContent={handlePaste}
             hasPasteTarget={_moduleClipboard !== null}
             onToggleMinimize={() => { setIsContextMenuOpen(false); handleToggleMinimize(); }}
             isMinimized={!!module.isMinimized}
             onDelete={() => { setIsContextMenuOpen(false); setIsDeleteDialogOpen(true); }}
           />
 
-          {isColorPaletteOpen && (
-            <div className="fixed inset-0 flex items-center justify-center px-4" style={{ zIndex: 100, background: "rgba(0,0,0,0.4)" }} onClick={() => setIsColorPaletteOpen(false)}>
-              <div className="rounded-2xl p-4" style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)" }} onClick={(e) => e.stopPropagation()}>
-                <p className="text-sm font-medium mb-3 px-1" style={{ color: "var(--text-primary)" }}>색상 선택</p>
-                <ColorPalette current={module.color} onSelect={(color) => { updateModule(boardId, module.id, { color }); setIsColorPaletteOpen(false); }} />
+          {isColorPaletteOpen && colorPalettePos && (
+            <div className="fixed inset-0 px-4" style={{ zIndex: 100, background: "rgba(0,0,0,0.4)" }} onClick={() => setIsColorPaletteOpen(false)}>
+              <div
+                className="rounded-2xl p-4"
+                style={{
+                  position: "fixed",
+                  left: colorPalettePos.x,
+                  top: colorPalettePos.y,
+                  width: "min(280px, calc(100vw - 32px))",
+                  background: "var(--surface-elevated)",
+                  border: "1px solid var(--border)",
+                  boxShadow: "var(--shadow-lg)",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div
+                  data-no-pan="true"
+                  className="text-sm font-medium mb-3 px-1 flex items-center justify-between gap-2"
+                  style={{ color: "var(--text-primary)", cursor: "grab", touchAction: "none", userSelect: "none" }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                    colorPaletteDragRef.current = {
+                      origin: { ...colorPalettePos },
+                      client: { x: e.clientX, y: e.clientY },
+                    };
+                  }}
+                  onPointerMove={(e) => {
+                    if (!colorPaletteDragRef.current) return;
+                    e.stopPropagation();
+                    const o = colorPaletteDragRef.current;
+                    const nx = o.origin.x + (e.clientX - o.client.x);
+                    const ny = o.origin.y + (e.clientY - o.client.y);
+                    const maxX = window.innerWidth - 48;
+                    const maxY = window.innerHeight - 48;
+                    setColorPalettePos({
+                      x: Math.round(Math.min(maxX, Math.max(8, nx))),
+                      y: Math.round(Math.min(maxY, Math.max(8, ny))),
+                    });
+                  }}
+                  onPointerUp={(e) => {
+                    colorPaletteDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      /* */
+                    }
+                  }}
+                  onPointerCancel={(e) => {
+                    colorPaletteDragRef.current = null;
+                    try {
+                      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+                    } catch {
+                      /* */
+                    }
+                  }}
+                >
+                  <span>색상 선택</span>
+                  <span className="text-xs font-normal" style={{ color: "var(--text-muted)" }}>
+                    끌어서 이동
+                  </span>
+                </div>
+                <ColorPalette
+                  current={module.color}
+                  onSelect={(color) => {
+                    updateModule(boardId, module.id, { color });
+                    setIsColorPaletteOpen(false);
+                  }}
+                />
               </div>
             </div>
           )}
@@ -689,7 +807,6 @@ export default function ModuleCardWrapper({
                       />
                       <button onClick={() => setIsFullViewOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--text-muted)", lineHeight: 1, padding: "4px 8px" }} aria-label="닫기">✕</button>
                     </div>
-                    {module.type === "memo" && <RichTextToolbar />}
                     <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
                       <FullViewContent module={module} onChange={handleDataChange} />
                     </div>
@@ -758,7 +875,7 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
         const other = boardFv.modules.find((m) => m.id === otherId);
         return {
           connectionId: c.id,
-          otherTitle: connectionPeerTitle(other),
+          otherTitle: connectionPeerTitle(other, boardFv),
           label: c.label || "",
           outgoing: c.fromModuleId === module.id,
         };
@@ -768,7 +885,15 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
   switch (module.type) {
     case "memo": {
       const d = module.data as MemoData;
-      return <RichMemoFullView data={d} onChange={(nd) => onChange(nd)} />;
+      const noteVariant =
+        boardFv && normalizeBoardCategory(boardFv) === "topic_notes";
+      return (
+        <RichMemoFullView
+          data={d}
+          onChange={(nd) => onChange(nd)}
+          variant={noteVariant ? "note" : "default"}
+        />
+      );
     }
     case "schedule": {
       const d = module.data as ScheduleData;
@@ -903,10 +1028,19 @@ function ScheduleFullView({ data, onChange }: { data: ScheduleData; onChange: (d
 }
 
 // ── 전체보기 리치 텍스트 메모 에디터 ────────────────────────────────────────
-function RichMemoFullView({ data, onChange }: { data: MemoData; onChange: (d: MemoData) => void }) {
+function RichMemoFullView({
+  data,
+  onChange,
+  variant = "default",
+}: {
+  data: MemoData;
+  onChange: (d: MemoData) => void;
+  variant?: "default" | "note";
+}) {
   const editorRef = useRef<HTMLDivElement>(null);
   const isComposing = useRef(false);
   const setEditorFocused = useRichTextStore((s) => s.setEditorFocused);
+  const isNote = variant === "note";
 
   // 전체보기가 열린 동안 툴바를 항상 활성 상태로 유지
   useEffect(() => {
@@ -920,37 +1054,77 @@ function RichMemoFullView({ data, onChange }: { data: MemoData; onChange: (d: Me
     if (document.activeElement === el) return;
     const html = data.content ?? "";
     if (el.innerHTML !== html) el.innerHTML = html;
-  });
+  }, [data.content]);
 
   return (
-    <div
-      ref={editorRef}
-      contentEditable
-      suppressContentEditableWarning
-      data-placeholder="내용을 입력하세요..."
-      onFocus={() => setEditorFocused(true)}
-      onBlur={() => setEditorFocused(false)}
-      onCompositionStart={() => { isComposing.current = true; }}
-      onCompositionEnd={(e) => {
-        isComposing.current = false;
-        onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
-      }}
-      onInput={(e) => {
-        if (isComposing.current) return;
-        onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
-      }}
-      style={{
-        minHeight: 280,
-        outline: "none",
-        fontSize: 14,
-        color: "var(--text-primary)",
-        lineHeight: 1.7,
-        wordBreak: "break-word",
-        overflowWrap: "break-word",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: "12px 14px",
-      }}
-    />
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div onPointerDown={(e) => e.stopPropagation()}>
+        <RichTextToolbar variant="embedded" />
+      </div>
+      <div
+        ref={editorRef}
+        className={isNote ? "memo-note-editor" : undefined}
+        contentEditable
+        suppressContentEditableWarning
+        data-placeholder={
+          isNote
+            ? "명령어, 프롬프트, 링크, 글머리표, 이미지… 한 노트에 함께 정리하세요"
+            : "내용을 입력하세요..."
+        }
+        onFocus={() => setEditorFocused(true)}
+        onBlur={() => setEditorFocused(false)}
+        onCompositionStart={() => { isComposing.current = true; }}
+        onCompositionEnd={(e) => {
+          isComposing.current = false;
+          onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
+        }}
+        onInput={(e) => {
+          if (isComposing.current) return;
+          onChange({ ...data, content: (e.currentTarget as HTMLDivElement).innerHTML });
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === " " || e.key === "Escape") e.stopPropagation();
+        }}
+        style={{
+          minHeight: isNote ? 420 : 280,
+          outline: "none",
+          fontSize: isNote ? 15 : 14,
+          color: "var(--text-primary)",
+          lineHeight: 1.7,
+          wordBreak: "break-word",
+          overflowWrap: "break-word",
+          border: "1px solid var(--border)",
+          borderRadius: isNote ? 10 : 8,
+          padding: isNote ? "14px 16px" : "12px 14px",
+        }}
+      />
+      <style>{`
+        .memo-note-editor ul, .memo-note-editor ol {
+          margin: 0.45em 0;
+          padding-left: 1.35em;
+        }
+        .memo-note-editor li { margin: 0.2em 0; }
+        .memo-note-editor img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 8px;
+          vertical-align: middle;
+        }
+        .memo-note-editor a { color: var(--primary); text-decoration: underline; }
+        .memo-note-editor code {
+          font-size: 0.9em;
+          padding: 0.1em 0.35em;
+          border-radius: 4px;
+          background: var(--surface-hover);
+        }
+        .memo-note-editor h1, .memo-note-editor h2, .memo-note-editor h3 {
+          margin: 0.6em 0 0.35em 0;
+          font-weight: 600;
+          line-height: 1.35;
+        }
+      `}</style>
+    </div>
   );
 }

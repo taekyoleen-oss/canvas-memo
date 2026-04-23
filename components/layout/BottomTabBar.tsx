@@ -12,6 +12,8 @@ import {
 interface BottomTabBarProps {
   boards: Board[];
   activeBoardId: string | null;
+  /** 현재 상단 탭 — 새 보드 FAB에 사용 */
+  activeWorkspace: BoardCategory;
   onSelect: (id: string) => void;
   onAdd: (category: BoardCategory) => void;
 }
@@ -19,6 +21,7 @@ interface BottomTabBarProps {
 export default function BottomTabBar({
   boards,
   activeBoardId,
+  activeWorkspace,
   onSelect,
   onAdd,
 }: BottomTabBarProps) {
@@ -166,7 +169,7 @@ export default function BottomTabBar({
 
       <button
         type="button"
-        onClick={() => onAdd("memo_schedule")}
+        onClick={() => onAdd(activeWorkspace)}
         className="flex items-center justify-center rounded-full flex-shrink-0 mx-2"
         style={{
           width: 44,
@@ -179,7 +182,7 @@ export default function BottomTabBar({
           fontWeight: "bold",
         }}
         aria-label="보드 추가"
-        title="메모·일정 보드 추가 (생각정리는 메뉴에서)"
+        title="현재 탭 영역에 새 보드"
       >
         +
       </button>

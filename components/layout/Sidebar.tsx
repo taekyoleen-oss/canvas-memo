@@ -5,12 +5,7 @@ import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import ThemeToggle from "@/components/ui-overlays/ThemeToggle";
-import { normalizeBoardCategory, sortBoardsForSidebar } from "@/lib/boardCategory";
-import {
-  loadCategoryCollapse,
-  saveCategoryCollapse,
-  type CategoryCollapseState,
-} from "@/lib/sidebarCategoryCollapse";
+import { boardsForWorkspace } from "@/lib/boardCategory";
 
 interface SidebarProps {
   boards: Board[];
@@ -36,13 +31,10 @@ export default function Sidebar({
   const [editValue, setEditValue] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
-  const [catCollapsed, setCatCollapsed] = useState<CategoryCollapseState>({
-    memo_schedule: false,
-    thinking: false,
-  });
   const editInputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<{ category: BoardCategory; index: number } | null>(null);
 
+  const activeWorkspace = useCanvasStore((s) => s.activeWorkspace);
   const updateBoard = useCanvasStore((s) => s.updateBoard);
   const removeBoard = useCanvasStore((s) => s.removeBoard);
   const reorderBoardsInCategory = useCanvasStore((s) => s.reorderBoardsInCategory);
@@ -74,28 +66,11 @@ export default function Sidebar({
     }
   }, [editingId]);
 
-  useEffect(() => {
-    setCatCollapsed(loadCategoryCollapse());
-  }, []);
-
-  function toggleCategoryCollapse(category: BoardCategory) {
-    setCatCollapsed((prev) => {
-      const next = { ...prev, [category]: !prev[category] };
-      saveCategoryCollapse(next);
-      return next;
-    });
-  }
-
   const sidebarWidth = isExpanded ? 240 : 64;
 
-  const sorted = useMemo(() => sortBoardsForSidebar(boards), [boards]);
-  const memoBoards = useMemo(
-    () => sorted.filter((b) => normalizeBoardCategory(b) === "memo_schedule"),
-    [sorted]
-  );
-  const thinkingBoards = useMemo(
-    () => sorted.filter((b) => normalizeBoardCategory(b) === "thinking"),
-    [sorted]
+  const workspaceBoards = useMemo(
+    () => boardsForWorkspace(boards, activeWorkspace),
+    [boards, activeWorkspace]
   );
 
   return (
@@ -170,9 +145,16 @@ export default function Sidebar({
             const isActive = board.id === activeBoardId;
             const isDragOver = dragOverKey === dragKey;
             const groups = board.groups ?? [];
+            const categoryLabel =
+              category === "memo_schedule"
+                ? "메모/할일"
+                : category === "thinking"
+                  ? "생각정리"
+                  : "주제별";
             return (
             <div
               key={board.id}
+              title={`${board.name} · ${categoryLabel}`}
               draggable={enableDrag}
               onDragStart={(e) => {
                 if (!enableDrag) return;
@@ -448,71 +430,38 @@ export default function Sidebar({
           }
 
           if (!isExpanded) {
-            return sorted.map((board) =>
-              renderBoardItem(
-                board,
-                normalizeBoardCategory(board),
-                0,
-                false
-              )
+            return workspaceBoards.map((board) =>
+              renderBoardItem(board, activeWorkspace, 0, false)
             );
           }
 
-          const catLabel = (c: BoardCategory) =>
-            c === "thinking" ? "생각정리" : "메모 및 일정";
+          const wsLabel =
+            activeWorkspace === "thinking"
+              ? "생각정리 보드"
+              : activeWorkspace === "topic_notes"
+                ? "주제별 보드"
+                : "메모/할일 보드";
 
-          const sectionHeader = (category: BoardCategory) => {
-            const collapsed = catCollapsed[category];
-            return (
+          return (
+            <>
               <div
-                key={`hdr-${category}`}
                 className="flex items-center justify-between gap-1"
-                style={{ marginTop: 10, marginBottom: 4, padding: "0 4px" }}
+                style={{ marginTop: 4, marginBottom: 6, padding: "0 4px" }}
               >
-                <button
-                  type="button"
-                  onClick={() => toggleCategoryCollapse(category)}
-                  className="flex items-center gap-1 min-w-0 rounded-md"
+                <span
+                  className="truncate"
                   style={{
-                    flex: 1,
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "2px 4px",
-                    textAlign: "left",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "var(--text-muted)",
+                    letterSpacing: "0.02em",
                   }}
-                  title={
-                    collapsed
-                      ? `${catLabel(category)} 목록 펼치기`
-                      : `${catLabel(category)} 목록 감추기`
-                  }
                 >
-                  <span
-                    style={{
-                      fontSize: 10,
-                      color: "var(--text-muted)",
-                      flexShrink: 0,
-                      width: 14,
-                    }}
-                    aria-hidden
-                  >
-                    {collapsed ? "▶" : "▾"}
-                  </span>
-                  <span
-                    className="truncate"
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "var(--text-muted)",
-                      letterSpacing: "0.02em",
-                    }}
-                  >
-                    {catLabel(category)}
-                  </span>
-                </button>
+                  {wsLabel}
+                </span>
                 <button
                   type="button"
-                  onClick={() => onAdd(category)}
+                  onClick={() => onAdd(activeWorkspace)}
                   className="rounded-md flex-shrink-0"
                   style={{
                     fontSize: 11,
@@ -523,33 +472,21 @@ export default function Sidebar({
                     color: "var(--primary)",
                     cursor: "pointer",
                   }}
-                  title={`${catLabel(category)} 새 보드`}
+                  title="이 영역에 새 보드"
                 >
                   +
                 </button>
               </div>
-            );
-          };
-
-          return (
-            <>
-              {sectionHeader("memo_schedule")}
-              {!catCollapsed.memo_schedule &&
-                memoBoards.map((board, i) =>
-                  renderBoardItem(board, "memo_schedule", i, true)
-                )}
-              {sectionHeader("thinking")}
-              {!catCollapsed.thinking &&
-                thinkingBoards.map((board, i) =>
-                  renderBoardItem(board, "thinking", i, true)
-                )}
+              {workspaceBoards.map((board, i) =>
+                renderBoardItem(board, activeWorkspace, i, true)
+              )}
             </>
           );
         })()}
 
         {!isExpanded && (
         <button
-          onClick={() => onAdd("memo_schedule")}
+          onClick={() => onAdd(activeWorkspace)}
           className="flex items-center rounded-lg"
           style={{
             minHeight: 44,
@@ -563,7 +500,7 @@ export default function Sidebar({
             gap: 8,
             marginTop: 4,
           }}
-          title="새 보드 (메모·일정) — 카테고리는 펼친 사이드바에서"
+          title="현재 상단 탭 영역에 새 보드"
         >
           <span
             style={{ fontSize: 20, width: 32, textAlign: "center", flexShrink: 0 }}

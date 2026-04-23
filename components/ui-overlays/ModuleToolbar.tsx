@@ -5,36 +5,42 @@ import {
   MEMO_SCHEDULE_MODULE_OPTIONS,
   STANDARD_MODULE_OPTIONS,
   BRAINSTORM_ADD_OPTION,
+  TOPIC_NOTES_MODULE_OPTIONS,
 } from "./moduleAddOptions";
 
 interface ModuleToolbarProps {
   onAdd: (type: ModuleType) => void;
   onSearch: () => void;
   boardCategory?: BoardCategory;
+  /** inline: 워크스페이스 스위처와 같은 줄 — 하단 테두리 없음, 가로 스크롤 */
+  variant?: "default" | "inline";
 }
 
 export default function ModuleToolbar({
   onAdd,
   onSearch,
   boardCategory = "memo_schedule",
+  variant = "default",
 }: ModuleToolbarProps) {
   const isThinking = boardCategory === "thinking";
+  const isTopic = boardCategory === "topic_notes";
+  const isInline = variant === "inline";
 
   return (
     <div
-      className="flex items-center gap-2 px-4 flex-wrap"
+      className={`flex min-h-[48px] min-w-0 flex-1 items-center gap-2 px-4 flex-nowrap overflow-x-auto ${isInline ? "" : "flex-shrink-0"}`}
       style={{
-        minHeight: 48,
         background: "var(--surface)",
-        borderBottom: "1px solid var(--border)",
-        flexShrink: 0,
+        borderBottom: isInline ? undefined : "1px solid var(--border)",
+        flexShrink: isInline ? 1 : 0,
+        scrollbarWidth: "thin",
       }}
     >
       <span
         className="text-xs font-medium mr-1"
         style={{ color: "var(--text-muted)" }}
       >
-        {isThinking ? "생각정리" : "메모·일정"}
+        {isThinking ? "생각정리" : isTopic ? "주제별 노트" : "메모·일정"}
       </span>
 
       {isThinking ? (
@@ -59,6 +65,31 @@ export default function ModuleToolbar({
             {BRAINSTORM_ADD_OPTION.label}
           </button>
           {STANDARD_MODULE_OPTIONS.map((option) => (
+            <button
+              key={option.type}
+              type="button"
+              onClick={() => onAdd(option.type)}
+              className="flex items-center gap-1.5 rounded-lg px-3"
+              style={{
+                height: 34,
+                background: "var(--surface-elevated)",
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                fontSize: 13,
+                color: "var(--text-primary)",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+              }}
+              title={`${option.label} 추가`}
+            >
+              <span style={{ fontSize: 15 }}>{option.icon}</span>
+              {option.label}
+            </button>
+          ))}
+        </>
+      ) : isTopic ? (
+        <>
+          {TOPIC_NOTES_MODULE_OPTIONS.map((option) => (
             <button
               key={option.type}
               type="button"

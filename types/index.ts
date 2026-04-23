@@ -1,14 +1,18 @@
 // 로컬 캐시: 계정별 `mindcanvas_v1_u_<userId>` (lib/storage). 레거시 공용 키 `mindcanvas_v1`은 마이그레이션용.
 
+/** 메모·일정 · 생각정리(브레인스토밍) · 주제별(노트·바이브 코딩 정리) */
+export type BoardCategory = "memo_schedule" | "thinking" | "topic_notes";
+
 export interface AppData {
   version: number;
   theme: "light" | "dark" | "system";
   boards: Board[];
   lastOpenedBoardId: string | null;
+  /** 상단 탭(워크스페이스) */
+  activeWorkspace?: BoardCategory;
+  /** 워크스페이스별 마지막으로 연 보드 id */
+  lastOpenedBoardByCategory?: Partial<Record<BoardCategory, string>>;
 }
-
-/** 메모·일정 캔버스 vs 생각정리(브레인스토밍 중심) 캔버스 */
-export type BoardCategory = "memo_schedule" | "thinking";
 
 export interface Board {
   id: string; // UUID
