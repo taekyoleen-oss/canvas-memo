@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { Module, ModuleColor, ModuleShape } from "@/types";
 
 interface ModuleCardProps {
@@ -21,6 +21,9 @@ interface ModuleCardProps {
   onToggleMinimize?: () => void;
   onTitleChange?: (title: string) => void;
   onFullView?: () => void;
+  /** 전체 보기(모달)이 열린 경우 아이콘 호버 시「접기」로 닫을 때 */
+  isFullViewOpen?: boolean;
+  onCloseFullView?: () => void;
   contentAreaHeight?: number; // 수동 리사이즈 시 콘텐츠 영역 고정 높이
   /** 주제별 노트: 헤더에도 펼치기·전체보기(최소화 시에는 펼치기) */
   topicNoteHeaderActions?: boolean;
@@ -61,10 +64,18 @@ export default function ModuleCard({
   onToggleMinimize,
   onTitleChange,
   onFullView,
+  isFullViewOpen = false,
+  onCloseFullView,
   contentAreaHeight,
   topicNoteHeaderActions = false,
 }: ModuleCardProps) {
   const isMinimized = !!module.isMinimized;
+  const [isTitleEditing, setIsTitleEditing] = useState(false);
+  const [headerIconHover, setHeaderIconHover] = useState(false);
+
+  useEffect(() => {
+    if (!module.isExpanded || isMinimized) setIsTitleEditing(false);
+  }, [module.isExpanded, isMinimized]);
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
   const rawShape: ModuleShape = module.shape ?? "rounded";
   const shape: ModuleShape = simpleExterior
@@ -133,33 +144,89 @@ export default function ModuleCard({
           height: 44,
           borderBottom: isMinimized ? "none" : "1px solid var(--border)",
           flexShrink: 0,
+          cursor: "inherit",
         }}
       >
-        <span style={{ fontSize: 15 }}>
-          {headerIconOverride ?? MODULE_TYPE_ICON[module.type]}
-        </span>
+        <div
+          className="flex min-w-0 flex-shrink-0 items-center gap-0.5"
+          onMouseEnter={() => setHeaderIconHover(true)}
+          onMouseLeave={() => setHeaderIconHover(false)}
+        >
+          {headerIconHover && (onFullView || onCloseFullView) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isFullViewOpen) onCloseFullView?.();
+                else onFullView?.();
+              }}
+              className="shrink-0 rounded px-1.5 font-medium"
+              style={{
+                height: 24,
+                fontSize: 10,
+                lineHeight: 1,
+                background: "var(--surface-elevated)",
+                border: "1px solid var(--border)",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+                cursor: "pointer",
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              {isFullViewOpen ? "접기" : "전체보기"}
+            </button>
+          )}
+          <span style={{ fontSize: 15 }} className="select-none">
+            {headerIconOverride ?? MODULE_TYPE_ICON[module.type]}
+          </span>
+        </div>
         {module.isExpanded && !isMinimized && onTitleChange ? (
-          <input
-            type="text"
-            value={(module.data as { title?: string }).title ?? ""}
-            onChange={(e) => onTitleChange(e.target.value)}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            placeholder={titleInputPlaceholder ?? "제목"}
-            className="flex-1 text-sm font-medium bg-transparent outline-none min-w-0"
-            style={{
-              color: "var(--text-primary)",
-              border: "none",
-              padding: 0,
-            }}
-          />
+          isTitleEditing ? (
+            <input
+              type="text"
+              data-module-header-title
+              data-title-edit="true"
+              value={(module.data as { title?: string }).title ?? ""}
+              onChange={(e) => onTitleChange(e.target.value)}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={() => setIsTitleEditing(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === "Escape") {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLInputElement).blur();
+                }
+              }}
+              autoFocus
+              placeholder={titleInputPlaceholder ?? "제목"}
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none"
+              style={{
+                color: "var(--text-primary)",
+                border: "none",
+                padding: 0,
+              }}
+            />
+          ) : (
+            <span
+              data-module-header-title
+              className="min-w-0 flex-1 cursor-grab truncate text-sm font-medium"
+              style={{ color: "var(--text-primary)" }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setIsTitleEditing(true);
+              }}
+              title="더블클릭: 제목 편집"
+            >
+              {getModuleTitle(module)}
+            </span>
+          )
         ) : (
           <span
-            className="flex-1 font-medium truncate text-sm"
-            style={{ color: "var(--text-primary)", cursor: "default" }}
+            data-module-header-title
+            className="min-w-0 flex-1 cursor-grab truncate text-sm font-medium"
+            style={{ color: "var(--text-primary)" }}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              // 최소화 상태에서 더블클릭 → 복원 (조금 펼침)
               if (isMinimized) onToggleMinimize?.();
             }}
             title={isMinimized ? "더블클릭: 펼치기" : undefined}

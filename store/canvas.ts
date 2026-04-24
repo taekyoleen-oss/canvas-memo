@@ -37,6 +37,7 @@ import {
   recoverCanonicalTopicNotesFromMemoScheduleBoards,
   repairMisclassifiedTopicNotesBoards,
 } from "@/lib/topicBoardSeed";
+import { applyComprehensiveClaudeTopicGuideNotes } from "@/lib/topicComprehensiveClaudeNotes";
 import {
   loadAppData,
   loadAppDataForUser,
@@ -103,6 +104,15 @@ interface CanvasStore {
     updates: Partial<Module>
   ): void;
   duplicateModule(boardId: string, moduleId: string): void;
+  /**
+   * 같은 워크스페이스(카테고리) 내 다른 보드로 모듈을 옮깁니다.
+   * 대상 보드에서 허용되지 않는 모듈 타입이면 `false`입니다.
+   */
+  moveModuleToBoard(
+    sourceBoardId: string,
+    targetBoardId: string,
+    moduleId: string
+  ): boolean;
   /** 메모·브레인스토밍: 방향 화살표로 인접 모듈 생성 + 연결 (한 번에 undo) */
   expandAdjacentModule(
     boardId: string,
@@ -824,6 +834,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     if (recoveredLocal.changed) boards = recoveredLocal.boards;
     const didRecoverTopicMemos = recoveredLocal.changed;
 
+    const comprehensiveLocal = applyComprehensiveClaudeTopicGuideNotes(
+      boards,
+      getTimestamp(),
+      uuidv4
+    );
+    if (comprehensiveLocal.changed) boards = comprehensiveLocal.boards;
+    const didComprehensiveClaudeGuide = comprehensiveLocal.changed;
+
     const lastBy: Partial<Record<BoardCategory, string>> = {
       ...(appData.lastOpenedBoardByCategory ?? {}),
     };
@@ -891,6 +909,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       didRepairCategory ||
       didEnsureTopicPair ||
       didRecoverTopicMemos ||
+      didComprehensiveClaudeGuide ||
       didClaudeBrandingMigrate
     ) {
       const state = get();
@@ -1092,6 +1111,13 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     );
     if (recoveredRemote.changed) boards = recoveredRemote.boards;
     const didRecoverTopicMemos = recoveredRemote.changed;
+
+    const comprehensiveRemote = applyComprehensiveClaudeTopicGuideNotes(
+      boards,
+      getTimestamp(),
+      uuidv4
+    );
+    if (comprehensiveRemote.changed) boards = comprehensiveRemote.boards;
 
     // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
     const currentActiveBoardId = get().activeBoardId;
@@ -1571,12 +1597,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       let boards = afterEnsure;
       const rec = recoverCanonicalTopicNotesFromMemoScheduleBoards(boards, now);
       if (rec.changed) boards = rec.boards;
+      const guide = applyComprehensiveClaudeTopicGuideNotes(boards, now, () => uuidv4());
+      if (guide.changed) boards = guide.boards;
       const list = boards
         .filter((b) => normalizeBoardCategory(b) === "topic_notes")
         .sort((a, b) => (a.sidebarOrder ?? 0) - (b.sidebarOrder ?? 0));
       const firstId = list[0]?.id ?? null;
       return {
-        ...(changed || rec.changed ? { boards } : {}),
+        ...(changed || rec.changed || guide.changed ? { boards } : {}),
         activeWorkspace: "topic_notes",
         activeBoardId: firstId,
         lastOpenedBoardByCategory: {
@@ -1712,6 +1740,101 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave?.();
     markDirty(boardId);
+  },
+
+  moveModuleToBoard(sourceBoardId, targetBoardId, moduleId) {
+    if (sourceBoardId === targetBoardId) return false;
+    const st = get();
+    const sourceBoard = st.boards.find((b) => b.id === sourceBoardId);
+    const targetBoard = st.boards.find((b) => b.id === targetBoardId);
+    if (!sourceBoard || !targetBoard) return false;
+    if (normalizeBoardCategory(sourceBoard) !== normalizeBoardCategory(targetBoard)) {
+      return false;
+    }
+    const mod = sourceBoard.modules.find((m) => m.id === moduleId);
+    if (!mod) return false;
+    if (!isModuleTypeAllowedOnBoard(mod.type, targetBoard)) return false;
+
+    get().pushHistory();
+    const now = getTimestamp();
+    const {
+      mapTemplateBundleId: _mb,
+      mapTemplateId: _mt,
+      mapPivot: _mp,
+      mapScale: _ms,
+      ...modRest
+    } = mod;
+
+    const maxZ = targetBoard.modules.reduce(
+      (a, m) => Math.max(a, Number(m.zIndex) || 0),
+      0
+    );
+    const bottomY =
+      targetBoard.modules.length === 0
+        ? 0
+        : Math.max(
+            ...targetBoard.modules.map((m) => m.position.y + m.size.height)
+          );
+    const GAP = 28;
+    const startY = bottomY > 0 ? bottomY + GAP : 72;
+
+    const moved: Module = {
+      ...modRest,
+      updatedAt: now,
+      position: { x: 48, y: startY },
+      zIndex: maxZ + 1,
+    };
+
+    const nextSourceGroups = (sourceBoard.groups ?? [])
+      .map((g) => {
+        if (!g.moduleIds.includes(moduleId)) return g;
+        return {
+          ...g,
+          moduleIds: g.moduleIds.filter((id) => id !== moduleId),
+          updatedAt: now,
+        };
+      })
+      .filter((g) => g.moduleIds.length > 0);
+
+    set((state) => ({
+      boards: state.boards.map((b) => {
+        if (b.id === sourceBoardId) {
+          return {
+            ...b,
+            modules: b.modules.filter((m) => m.id !== moduleId),
+            connections: b.connections.filter(
+              (c) => c.fromModuleId !== moduleId && c.toModuleId !== moduleId
+            ),
+            groups: nextSourceGroups,
+            updatedAt: now,
+          };
+        }
+        if (b.id === targetBoardId) {
+          return {
+            ...b,
+            modules: [...b.modules, moved],
+            updatedAt: now,
+          };
+        }
+        return b;
+      }),
+      activeBoardId: targetBoardId,
+      activeWorkspace: normalizeBoardCategory(targetBoard),
+      lastOpenedBoardByCategory: {
+        ...state.lastOpenedBoardByCategory,
+        [normalizeBoardCategory(targetBoard)]: targetBoardId,
+      },
+      focusModuleId: state.focusModuleId === moduleId ? null : state.focusModuleId,
+      pendingGroupInvite:
+        state.pendingGroupInvite?.candidateModuleId === moduleId
+          ? null
+          : state.pendingGroupInvite,
+    }));
+
+    debouncedSave?.();
+    markDirty(sourceBoardId);
+    markDirty(targetBoardId);
+    return true;
   },
 
   expandAdjacentModule(boardId, sourceModuleId, direction, options) {

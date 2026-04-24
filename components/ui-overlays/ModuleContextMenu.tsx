@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 interface ModuleContextMenuProps {
   isOpen: boolean;
   anchorRect?: DOMRect | null;
@@ -15,6 +17,9 @@ interface ModuleContextMenuProps {
   onToggleMinimize: () => void;
   isMinimized: boolean;
   onDelete: () => void;
+  /** 같은 카테고리(워크스페이스) 내 이동 가능한 보드 — 비어 있으면 영역 숨김 */
+  moveBoardOptions?: { id: string; label: string }[];
+  onMoveToBoard?: (targetBoardId: string) => void;
 }
 
 interface MenuItem {
@@ -31,6 +36,8 @@ interface MenuItem {
 const MENU_WIDTH = 220;
 const MENU_ROW_BASE = 44;
 const MENU_ROW_TALL = 52;
+/** 콤보 + 라벨 + 이동 버튼 영역(대략) */
+const MOVE_BLOCK_HEIGHT = 100;
 
 export default function ModuleContextMenu({
   isOpen,
@@ -45,7 +52,18 @@ export default function ModuleContextMenu({
   onToggleMinimize,
   isMinimized,
   onDelete,
+  moveBoardOptions,
+  onMoveToBoard,
 }: ModuleContextMenuProps) {
+  const [moveTargetId, setMoveTargetId] = useState("");
+
+  const hasMoveBlock =
+    !!onMoveToBoard && Array.isArray(moveBoardOptions) && moveBoardOptions.length > 0;
+
+  useEffect(() => {
+    if (isOpen) setMoveTargetId("");
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const items: MenuItem[] = [
@@ -82,10 +100,12 @@ export default function ModuleContextMenu({
     { id: "delete", icon: "🗑", label: "삭제", action: onDelete, danger: true },
   ];
 
-  const menuHeight = items.reduce(
-    (h, it) => h + (it.subtitle ? MENU_ROW_TALL : MENU_ROW_BASE),
-    0
-  );
+  const menuHeight =
+    (hasMoveBlock ? MOVE_BLOCK_HEIGHT : 0) +
+    items.reduce(
+      (h, it) => h + (it.subtitle ? MENU_ROW_TALL : MENU_ROW_BASE),
+      0
+    );
 
   function handleItemClick(action: () => void) {
     action();
@@ -117,6 +137,74 @@ export default function ModuleContextMenu({
 
   const pos = calcMenuPos();
 
+  const moveBlock =
+    hasMoveBlock && onMoveToBoard ? (
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="px-5 md:px-3"
+        style={{
+          borderBottom: "1px solid var(--border)",
+          paddingTop: 10,
+          paddingBottom: 10,
+        }}
+      >
+        <p
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: "var(--text-muted)",
+            margin: "0 0 6px 0",
+          }}
+        >
+          다른 보드로 이동
+        </p>
+        <div className="flex items-stretch gap-2">
+          <select
+            className="min-w-0 flex-1 rounded-md bg-transparent"
+            style={{
+              fontSize: 14,
+              padding: "6px 8px",
+              border: "1px solid var(--border)",
+              color: "var(--text-primary)",
+            }}
+            value={moveTargetId}
+            onChange={(e) => setMoveTargetId(e.target.value)}
+            aria-label="이동할 보드"
+          >
+            <option value="">보드 선택…</option>
+            {moveBoardOptions!.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={!moveTargetId}
+            onClick={() => {
+              if (moveTargetId) onMoveToBoard(moveTargetId);
+              onClose();
+            }}
+            className="shrink-0 rounded-md px-3 font-medium"
+            style={{
+              minWidth: 52,
+              fontSize: 13,
+              background: moveTargetId ? "var(--primary)" : "var(--surface-hover)",
+              color: moveTargetId ? "var(--primary-fg)" : "var(--text-muted)",
+              border: "1px solid var(--border)",
+              cursor: moveTargetId ? "pointer" : "not-allowed",
+            }}
+          >
+            이동
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "6px 0 0 0" }}>
+          같은 탭(메모·일정 / 생각정리 / 주제별)의 다른 보드만
+        </p>
+      </div>
+    ) : null;
+
   return (
     <>
       {/* 모바일: 바텀시트 */}
@@ -141,6 +229,7 @@ export default function ModuleContextMenu({
             style={{ background: "var(--border-strong)" }}
           />
           <div className="flex flex-col">
+            {moveBlock}
             {items.map((item) => (
               <button
                 key={item.id}
@@ -207,6 +296,7 @@ export default function ModuleContextMenu({
             animation: "ctxIn 120ms ease-out",
           }}
         >
+          {moveBlock}
           {items.map((item) => (
             <button
               key={item.id}

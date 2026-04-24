@@ -15,7 +15,8 @@ import type {
   ExpandAdjacentModuleOptions,
 } from "@/types";
 import type { AnchorSide } from "@/lib/canvas/geometry";
-import { normalizeBoardCategory } from "@/lib/boardCategory";
+import { boardsForWorkspace, normalizeBoardCategory } from "@/lib/boardCategory";
+import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -100,11 +101,25 @@ export default function ModuleCardWrapper({
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
   const duplicateModule = useCanvasStore((s) => s.duplicateModule);
+  const moveModuleToBoard = useCanvasStore((s) => s.moveModuleToBoard);
   const expandAdjacentModule = useCanvasStore((s) => s.expandAdjacentModule);
+  const boards = useCanvasStore((s) => s.boards);
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const thinkingBoard = board ? normalizeBoardCategory(board) === "thinking" : false;
   const topicNoteBoard = board ? normalizeBoardCategory(board) === "topic_notes" : false;
   const isTopicNoteMemo = topicNoteBoard && module.type === "memo";
+
+  const moveBoardOptions = useMemo(() => {
+    if (!board) return [];
+    const cat = normalizeBoardCategory(board);
+    return boardsForWorkspace(boards, cat)
+      .filter((b) => b.id !== boardId)
+      .filter((b) => isModuleTypeAllowedOnBoard(module.type, b))
+      .map((b) => ({
+        id: b.id,
+        label: `${b.icon ? `${b.icon} ` : ""}${(b.name ?? "").trim() || "제목 없음"}`.trim(),
+      }));
+  }, [boards, board, boardId, module.type]);
 
   const brainstormCanvasLinks: BrainstormCanvasLinkSummary[] = useMemo(() => {
     if (module.type !== "brainstorm" || !board) return [];
@@ -144,7 +159,12 @@ export default function ModuleCardWrapper({
   const [memoExpandAnchorSide, setMemoExpandAnchorSide] = useState<AnchorSide | null>(null);
   const [expandDirection, setExpandDirection] = useState<AnchorSide | null>(null);
   const [isFullViewOpen, setIsFullViewOpen] = useState(false);
+  const [fullViewTitleEdit, setFullViewTitleEdit] = useState(false);
   const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    if (!isFullViewOpen) setFullViewTitleEdit(false);
+  }, [isFullViewOpen]);
 
   // ── 리사이즈 상태 ──────────────────────────────────────────────────────
   const [isResizing, setIsResizing] = useState(false);
@@ -434,6 +454,13 @@ export default function ModuleCardWrapper({
     setIsContextMenuOpen(false);
   }
 
+  function handleMoveToBoard(targetBoardId: string) {
+    const ok = moveModuleToBoard(boardId, targetBoardId, module.id);
+    if (ok) {
+      onDeselect();
+    }
+  }
+
   function handleStartConnect() {
     startConnecting(module.id, "right");
     setIsContextMenuOpen(false);
@@ -449,6 +476,7 @@ export default function ModuleCardWrapper({
     ) return;
 
     if (e.detail === 2) {
+      if (target.closest("[data-module-header-title]")) return;
       if (module.isMinimized) handleToggleMinimize();
       else handleToggleExpand();
       return;
@@ -601,6 +629,8 @@ export default function ModuleCardWrapper({
           onToggleMinimize={handleToggleMinimize}
           onTitleChange={handleTitleChange}
           onFullView={() => setIsFullViewOpen(true)}
+          isFullViewOpen={isFullViewOpen}
+          onCloseFullView={() => setIsFullViewOpen(false)}
           contentAreaHeight={contentAreaHeight}
         >
           {renderModuleContent()}
@@ -714,6 +744,8 @@ export default function ModuleCardWrapper({
             onToggleMinimize={() => { setIsContextMenuOpen(false); handleToggleMinimize(); }}
             isMinimized={!!module.isMinimized}
             onDelete={() => { setIsContextMenuOpen(false); setIsDeleteDialogOpen(true); }}
+            moveBoardOptions={moveBoardOptions}
+            onMoveToBoard={moveBoardOptions.length > 0 ? handleMoveToBoard : undefined}
           />
 
           {isColorPaletteOpen && colorPalettePos && (
@@ -797,14 +829,33 @@ export default function ModuleCardWrapper({
               : <div className="fixed inset-0 flex items-center justify-center px-4" style={{ zIndex: 200, background: "rgba(0,0,0,0.55)" }} onClick={() => setIsFullViewOpen(false)}>
                   <div className="rounded-2xl flex flex-col" style={{ background: "var(--surface-elevated)", border: "1px solid var(--border)", boxShadow: "var(--shadow-lg)", width: "min(600px, 100%)", maxHeight: "85vh", overflow: "hidden" }} onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-                      {/* 제목 편집 가능 */}
-                      <input
-                        type="text"
-                        value={(module.data as { title?: string }).title ?? ""}
-                        onChange={(e) => handleTitleChange(e.target.value)}
-                        placeholder="제목"
-                        style={{ flex: 1, fontSize: 16, fontWeight: 600, color: "var(--text-primary)", background: "transparent", border: "none", outline: "none", minWidth: 0 }}
-                      />
+                      {fullViewTitleEdit ? (
+                        <input
+                          type="text"
+                          data-title-edit="true"
+                          value={(module.data as { title?: string }).title ?? ""}
+                          onChange={(e) => handleTitleChange(e.target.value)}
+                          onBlur={() => setFullViewTitleEdit(false)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === "Escape") {
+                              e.preventDefault();
+                              setFullViewTitleEdit(false);
+                            }
+                          }}
+                          autoFocus
+                          placeholder="제목"
+                          style={{ flex: 1, fontSize: 16, fontWeight: 600, color: "var(--text-primary)", background: "transparent", border: "none", outline: "none", minWidth: 0 }}
+                        />
+                      ) : (
+                        <span
+                          className="min-w-0 flex-1 cursor-text truncate font-semibold"
+                          style={{ fontSize: 16, color: "var(--text-primary)" }}
+                          onDoubleClick={() => setFullViewTitleEdit(true)}
+                          title="더블클릭: 제목 편집"
+                        >
+                          {(module.data as { title?: string }).title?.trim() || "제목"}
+                        </span>
+                      )}
                       <button onClick={() => setIsFullViewOpen(false)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 20, color: "var(--text-muted)", lineHeight: 1, padding: "4px 8px" }} aria-label="닫기">✕</button>
                     </div>
                     <div className="overflow-y-auto p-5" style={{ flex: 1 }}>
