@@ -62,6 +62,20 @@ export type ModuleShape =
 /** 연결선 경로 — 생략 시 베지어 곡선 */
 export type ConnectionPathStyle = "bezier" | "orthogonal" | "straight";
 
+/** 캔버스에 삽입하는 맵 템플릿 종류(여러 모듈 + 연결) */
+export type BrainstormMapType =
+  | "brainstorm"
+  | "process_map"
+  | "mind_map"
+  | "workflow_map"
+  | "knowledge_map"
+  | "flowchart"
+  | "concept_map"
+  | "strategy_map"
+  | "visual_map"
+  | "swot_map"
+  | "mental_map";
+
 /** 방향 확장(화살표)으로 새 모듈 만들 때 옵션 */
 export interface ExpandAdjacentModuleOptions {
   moduleShape: ModuleShape;
@@ -83,6 +97,14 @@ export interface Module {
   createdAt: string;
   updatedAt: string;
   data: MemoData | ScheduleData | ImageData | LinkData | FileData | TableData | BrainstormData;
+  /**
+   * 맵 템플릿으로 한 번에 넣은 모듈 묶음(캔버스 `Group` 엔티티와 별개).
+   * 동일 `mapTemplateBundleId`를 가진 모듈은 확대·축소·템플릿 도구 추가 시 함께 다룹니다.
+   */
+  mapTemplateBundleId?: string;
+  mapTemplateId?: BrainstormMapType;
+  mapPivot?: { x: number; y: number };
+  mapScale?: number;
 }
 
 export interface MemoData {
@@ -98,20 +120,6 @@ export interface ScheduleData {
 }
 
 export type BrainstormItemStatus = "raw" | "refined" | "archived";
-
-/** 캔버스에 삽입하는 맵 템플릿 종류(여러 모듈 + 연결) */
-export type BrainstormMapType =
-  | "brainstorm"
-  | "process_map"
-  | "mind_map"
-  | "workflow_map"
-  | "knowledge_map"
-  | "flowchart"
-  | "concept_map"
-  | "strategy_map"
-  | "visual_map"
-  | "swot_map"
-  | "mental_map";
 
 /** 카드 안 아이디어 간 연결(캔버스 Connection과 별개) */
 export interface BrainstormItemLink {

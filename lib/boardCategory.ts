@@ -4,6 +4,19 @@ export function normalizeBoardCategory(board: Board): BoardCategory {
   return board.category ?? "memo_schedule";
 }
 
+/**
+ * Supabase `boards.board_category` 컬럼 값.
+ * DB에 `boards_board_category_check`가 topic_notes를 포함하도록 마이그레이션되어 있어야 합니다.
+ */
+export function boardCategoryToSupabaseColumn(
+  category: Board["category"] | string | undefined
+): "memo_schedule" | "thinking" | "topic_notes" {
+  if (category === "thinking" || category === "topic_notes" || category === "memo_schedule") {
+    return category;
+  }
+  return "memo_schedule";
+}
+
 /** 사이드바: 메모·일정 먼저, 생각정리, 주제별 — 각 섹션은 sidebarOrder 기준 (레거시·전체 목록용) */
 export function sortBoardsForSidebar(boards: Board[]): Board[] {
   const memo = boards

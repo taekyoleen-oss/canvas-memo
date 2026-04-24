@@ -4,7 +4,6 @@ import type { BoardCategory, ModuleType } from "@/types";
 import {
   MEMO_SCHEDULE_MODULE_OPTIONS,
   STANDARD_MODULE_OPTIONS,
-  BRAINSTORM_ADD_OPTION,
   TOPIC_NOTES_MODULE_OPTIONS,
 } from "./moduleAddOptions";
 
@@ -12,6 +11,8 @@ interface ModuleToolbarProps {
   onAdd: (type: ModuleType) => void;
   onSearch: () => void;
   boardCategory?: BoardCategory;
+  /** 생각정리: 맵 템플릿 다이얼로그 — 모듈 버튼 줄 맨 앞에 배치 */
+  onMapTemplates?: () => void;
   /** inline: 워크스페이스 스위처와 같은 줄 — 하단 테두리 없음, 가로 스크롤 */
   variant?: "default" | "inline";
 }
@@ -20,6 +21,7 @@ export default function ModuleToolbar({
   onAdd,
   onSearch,
   boardCategory = "memo_schedule",
+  onMapTemplates,
   variant = "default",
 }: ModuleToolbarProps) {
   const isThinking = boardCategory === "thinking";
@@ -45,25 +47,28 @@ export default function ModuleToolbar({
 
       {isThinking ? (
         <>
-          <button
-            type="button"
-            onClick={() => onAdd(BRAINSTORM_ADD_OPTION.type)}
-            className="flex items-center gap-1.5 rounded-lg px-3"
-            style={{
-              height: 34,
-              background: "var(--primary-soft)",
-              border: "1px solid var(--primary)",
-              cursor: "pointer",
-              fontSize: 13,
-              color: "var(--primary)",
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-            }}
-            title="아이디어 카드 — 캔버스 하단 🗺 맵 템플릿으로 여러 모듈을 한 번에 넣을 수 있어요"
-          >
-            <span style={{ fontSize: 15 }}>{BRAINSTORM_ADD_OPTION.icon}</span>
-            {BRAINSTORM_ADD_OPTION.label}
-          </button>
+          {onMapTemplates ? (
+            <button
+              type="button"
+              onClick={onMapTemplates}
+              className="flex items-center gap-1.5 rounded-lg px-3"
+              style={{
+                height: 34,
+                background: "var(--primary-soft)",
+                border: "1px solid var(--primary)",
+                cursor: "pointer",
+                fontSize: 13,
+                color: "var(--primary)",
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}
+              title="맵 템플릿 — 여러 모듈과 연결이 한 번에 추가됩니다"
+            >
+              <span style={{ fontSize: 15 }}>🗺</span>
+              <span className="hidden sm:inline">맵 템플릿</span>
+            </button>
+          ) : null}
           {STANDARD_MODULE_OPTIONS.map((option) => (
             <button
               key={option.type}

@@ -13,11 +13,14 @@ import type {
   BrainstormData,
 } from "@/types";
 import { buildCanvasMapTemplate } from "@/lib/canvas/mapTemplates";
-import { BRAINSTORM_MAP_OPTIONS } from "@/lib/brainstormMapMeta";
 import { findMapToolDef } from "@/lib/canvas/mapTemplateTools";
 import { moduleColorToConnectionHex } from "@/lib/moduleColorHex";
 import { buildTemplateData } from "@/lib/moduleTemplates";
-import { nextSidebarOrder, normalizeBoardCategory } from "@/lib/boardCategory";
+import {
+  boardCategoryToSupabaseColumn,
+  nextSidebarOrder,
+  normalizeBoardCategory,
+} from "@/lib/boardCategory";
 import { normalizeBoardForClient, normalizeBoardsForClient } from "@/lib/boardIntegrity";
 import {
   boardsChildrenSignature,
@@ -113,10 +116,16 @@ interface CanvasStore {
     templateId: BrainstormMapType,
     origin: { x: number; y: number }
   ): void;
-  /** 맵 템플릿 그룹: 피벗 기준 균일 확대·축소 (실행취소 1회) */
-  scaleMapTemplateGroup(boardId: string, groupId: string, factor: number): void;
-  /** 맵 템플릿 그룹에 템플릿 도구로 모듈 추가 (실행취소 1회) */
-  appendMapToolModule(boardId: string, groupId: string, toolId: string): void;
+  /**
+   * 맵 템플릿: 피벗 기준 균일 확대·축소 (실행취소 1회).
+   * `groupOrBundleId`는 레거시 `Group.id`이거나, 묶음 모듈의 `mapTemplateBundleId`입니다.
+   */
+  scaleMapTemplateGroup(boardId: string, groupOrBundleId: string, factor: number): void;
+  /**
+   * 맵 템플릿 도구로 모듈 추가 (실행취소 1회).
+   * `groupOrBundleId`는 레거시 `Group.id`이거나 `mapTemplateBundleId`입니다.
+   */
+  appendMapToolModule(boardId: string, groupOrBundleId: string, toolId: string): void;
 
   // 커넥션 CRUD
   addConnection(boardId: string, connection: Omit<Connection, "id">): void;
@@ -173,16 +182,29 @@ interface CanvasStore {
   /** 로컬 모듈·연결·그룹이 DB보다 적거나 비었을 때 서버 행으로 맞춤 (복구) */
   repairEmptyBoardsFromSupabase(userId: string): Promise<void>;
   /**
-   * Supabase·메모리보다 브라우저 localStorage 쪽에 모듈/연결이 더 많이 남아 있으면 합친 뒤 DB에 다시 올립니다.
-   * (서버 행이 이미 지워진 경우에도 로컬 캐시로 되살릴 수 있는 유일한 자동 경로)
+   * Supabase·메모리보다 브라우저 localStorage 쪽에 모듈/연결이 더 많이 남아 있으면 메모리·로컬에만 합칩니다.
+   * DB 반영은 사용자가「클라우드에 저장」으로 명시할 때 `syncToSupabase`를 호출하세요.
    */
   recoverFromBrowserCaches(userId: string): Promise<boolean>;
-  // Supabase에 전체 상태 업서트 (필요 시 수동 호출)
+  /** Supabase에 전체 상태 반영 — 사용자가 명시적으로 요청할 때만 호출 */
   syncToSupabase(userId: string): Promise<void>;
+
+  /** 자동 동기화 상태 */
+  autoSyncStatus: "idle" | "pending" | "syncing" | "error";
+  /** hydration 완료 후 호출 — 이 시점부터 dirty 추적 및 자동 동기화 시작 */
+  markHydrated(userId: string): void;
+  /** 현재 보드 데이터를 JSON 문자열로 내보내기 (백업용) */
+  exportBackupJson(): string;
 }
 
 let debouncedSave: (() => void) | null = null;
-let debouncedSupabaseSync: (() => void) | null = null;
+
+// ── 자동 Supabase 동기화 ─────────────────────────────────────────────────
+let currentUserId: string | null = null;
+let isHydrated = false; // hydration 완료 후에만 dirty 추적
+const dirtyBoardIds = new Set<string>(); // 수정된 보드 ID
+let autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let isSyncingAuto = false;
 
 /** 레거시 공용 키의 보드를 한 번만 현재 계정으로 옮김 (동일 브라우저 다계정 오염 방지) */
 const LEGACY_CANVAS_MIGRATED_FLAG = "mindcanvas_v1_legacy_canvas_migrated";
@@ -227,8 +249,12 @@ function mapModuleFromSupabaseRow(m: {
   data: Module["data"];
   created_at: string;
   updated_at: string;
+  map_template_bundle_id?: string | null;
+  map_template_id?: string | null;
+  map_pivot?: { x: number; y: number } | null;
+  map_scale?: number | null;
 }): Module {
-  return {
+  const mod: Module = {
     id: m.id,
     type: m.type as Module["type"],
     position: m.position,
@@ -241,6 +267,15 @@ function mapModuleFromSupabaseRow(m: {
     createdAt: m.created_at,
     updatedAt: m.updated_at,
   };
+  const bid = m.map_template_bundle_id;
+  const tid = m.map_template_id;
+  if (bid && tid) {
+    mod.mapTemplateBundleId = bid;
+    mod.mapTemplateId = tid as BrainstormMapType;
+    if (m.map_pivot) mod.mapPivot = m.map_pivot;
+    if (typeof m.map_scale === "number" && m.map_scale > 0) mod.mapScale = m.map_scale;
+  }
+  return mod;
 }
 
 function mapConnectionFromSupabaseRow(c: {
@@ -252,8 +287,15 @@ function mapConnectionFromSupabaseRow(c: {
   label: string | null;
   style: Connection["style"] | null;
   color: string | null;
+  path_style?: string | null;
 }): Connection {
-  return {
+  const rawColor = (c.color ?? "").trim();
+  const pathStyleRaw = c.path_style;
+  const pathStyle =
+    pathStyleRaw === "orthogonal" || pathStyleRaw === "straight" || pathStyleRaw === "bezier"
+      ? pathStyleRaw
+      : undefined;
+  const conn: Connection = {
     id: c.id,
     fromModuleId: c.from_module_id,
     toModuleId: c.to_module_id,
@@ -261,8 +303,10 @@ function mapConnectionFromSupabaseRow(c: {
     toAnchor: c.to_anchor,
     label: (c.label ?? "") as string,
     style: (c.style ?? "solid") as Connection["style"],
-    color: (c.color ?? "") as string,
+    color: rawColor.length > 0 ? rawColor : "#94a3b8",
   };
+  if (pathStyle) conn.pathStyle = pathStyle;
+  return conn;
 }
 
 function mapGroupFromSupabaseRow(g: {
@@ -308,121 +352,289 @@ function mapGroupFromSupabaseRow(g: {
   } satisfies Group;
 }
 
+const BOARD_SYNC_CHUNK = 120;
+
+/**
+ * 보드 하위 테이블 upsert — 실패 시 false.
+ * silent: true 이면 실패를 로그 없이 무시 (선택적 컬럼 업서트 등).
+ */
+async function upsertBoardTableChunks(
+  supabase: ReturnType<typeof createClient>,
+  table: "modules" | "connections" | "groups",
+  rows: Record<string, unknown>[],
+  onConflict: string,
+  logBoardId: string,
+  opts?: { silent?: boolean }
+): Promise<boolean> {
+  for (let i = 0; i < rows.length; i += BOARD_SYNC_CHUNK) {
+    const slice = rows.slice(i, i + BOARD_SYNC_CHUNK);
+    if (slice.length === 0) continue;
+    const { error } = await supabase.from(table).upsert(slice, { onConflict });
+    if (error) {
+      if (!opts?.silent) {
+        console.error(
+          "[MindCanvas] Supabase upsert failed:",
+          table,
+          logBoardId,
+          error.message,
+          error
+        );
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
+/** 서버에만 남은 행 제거 — upsert 성공 후에만 호출할 것 */
+async function deleteBoardChildrenNotInIdSet(
+  supabase: ReturnType<typeof createClient>,
+  table: "modules" | "connections" | "groups",
+  boardId: string,
+  keepIds: Set<string>
+): Promise<void> {
+  const { data, error } = await supabase.from(table).select("id").eq("board_id", boardId);
+  if (error) {
+    console.warn("[MindCanvas] Supabase id list for orphan cleanup:", table, error.message);
+    return;
+  }
+  const toRemove = (data ?? [])
+    .map((r: { id: string }) => r.id)
+    .filter((id) => id && !keepIds.has(id));
+  for (let i = 0; i < toRemove.length; i += BOARD_SYNC_CHUNK) {
+    const slice = toRemove.slice(i, i + BOARD_SYNC_CHUNK);
+    if (slice.length === 0) continue;
+    const { error: delErr } = await supabase.from(table).delete().in("id", slice);
+    if (delErr) {
+      console.error(
+        "[MindCanvas] Supabase orphan delete failed:",
+        table,
+        boardId,
+        delErr.message,
+        delErr
+      );
+    }
+  }
+}
+
 async function pushBoardToSupabase(
   supabase: ReturnType<typeof createClient>,
   userId: string,
-  board: Board
-) {
+  board: Board,
+  opts?: { trusted?: boolean }
+): Promise<boolean> {
   const groups = board.groups ?? [];
   const modules = board.modules ?? [];
   const connections = board.connections ?? [];
 
-  const { count, error: countErr } = await supabase
-    .from("modules")
-    .select("*", { count: "exact", head: true })
-    .eq("board_id", board.id);
+  let preserveChildRows = false;
 
-  if (countErr) {
-    console.warn("[MindCanvas] Supabase module count failed:", countErr.message);
+  if (!opts?.trusted) {
+    const { count, error: countErr } = await supabase
+      .from("modules")
+      .select("*", { count: "exact", head: true })
+      .eq("board_id", board.id);
+
+    if (countErr) {
+      console.warn("[MindCanvas] Supabase module count failed:", countErr.message);
+    }
+
+    const { count: connHeadCount, error: connCountErr } = await supabase
+      .from("connections")
+      .select("*", { count: "exact", head: true })
+      .eq("board_id", board.id);
+
+    if (connCountErr) {
+      console.warn("[MindCanvas] Supabase connection count failed:", connCountErr.message);
+    }
+
+    const dbModuleCount = count ?? 0;
+    const dbConnCount = connHeadCount ?? 0;
+    preserveChildRows =
+      (modules.length === 0 && dbModuleCount > 0) ||
+      (connections.length === 0 && dbConnCount > 0) ||
+      (modules.length > 0 && modules.length < dbModuleCount);
   }
 
-  const { count: connHeadCount, error: connCountErr } = await supabase
-    .from("connections")
-    .select("*", { count: "exact", head: true })
-    .eq("board_id", board.id);
+  const boardCategoryCol = boardCategoryToSupabaseColumn(board.category);
 
-  if (connCountErr) {
-    console.warn("[MindCanvas] Supabase connection count failed:", connCountErr.message);
-  }
-
-  const dbModuleCount = count ?? 0;
-  const dbConnCount = connHeadCount ?? 0;
-  /**
-   * 클라이언트가 비었거나 DB보다 모듈이 적을 때 전체 삭제·재삽입하면 서버에만 남은 메모·연결선이 사라집니다.
-   * 연결만 비고 DB에 연결이 있으면 동일하게 보존합니다.
-   */
-  const preserveChildRows =
-    (modules.length === 0 && dbModuleCount > 0) ||
-    (connections.length === 0 && dbConnCount > 0) ||
-    (modules.length > 0 && modules.length < dbModuleCount);
-
-  await supabase.from("boards").upsert({
+  const { error: boardUpsertErr } = await supabase.from("boards").upsert({
     id: board.id,
     user_id: userId,
     name: board.name,
     icon: board.icon,
     color: board.color,
-    board_category: board.category ?? "memo_schedule",
+    board_category: boardCategoryCol,
     sidebar_order: board.sidebarOrder ?? 0,
     viewport: board.viewport,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
   });
+  if (boardUpsertErr) {
+    console.error("[MindCanvas] boards upsert failed:", board.id, boardUpsertErr.message);
+    if (
+      boardUpsertErr.message.includes("boards_board_category_check") &&
+      boardCategoryCol === "topic_notes"
+    ) {
+      console.error(
+        "[MindCanvas] Supabase의 boards 제약에 topic_notes가 없습니다. " +
+          "대시보드 SQL 또는 `pnpm supabase db push`로 마이그레이션 " +
+          "`20260423120000_board_category_topic_notes.sql`(동일 내용의 최신 재적용 파일)을 적용해 주세요."
+      );
+    }
+    return false;
+  }
 
   if (preserveChildRows) {
-    return;
+    return true;
   }
 
-  await supabase.from("connections").delete().eq("board_id", board.id);
-  await supabase.from("groups").delete().eq("board_id", board.id);
-  await supabase.from("modules").delete().eq("board_id", board.id);
+  /**
+   * 이전: 전부 delete 후 insert → insert 실패 시 보드가 비는 치명적 손실.
+   * 현재: upsert로 맞춘 뒤, 클라이언트에 없는 id만 삭제.
+   */
+  // ① 모듈 기본 필드 upsert (항상 성공해야 함)
+  const moduleBaseRows = modules.map((m) => ({
+    id: m.id,
+    board_id: board.id,
+    user_id: userId,
+    type: m.type,
+    position: m.position,
+    size: m.size,
+    z_index: m.zIndex,
+    color: m.color,
+    is_expanded: m.isExpanded,
+    is_minimized: m.isMinimized ?? false,
+    data: m.data,
+    created_at: m.createdAt,
+    updated_at: m.updatedAt,
+  }));
 
-  if (modules.length > 0) {
-    await supabase.from("modules").insert(
-      modules.map((m) => ({
-        id: m.id,
-        board_id: board.id,
-        user_id: userId,
-        type: m.type,
-        position: m.position,
-        size: m.size,
-        z_index: m.zIndex,
-        color: m.color,
-        is_expanded: m.isExpanded,
-        is_minimized: m.isMinimized ?? false,
-        data: m.data,
-        created_at: m.createdAt,
-        updated_at: m.updatedAt,
-      }))
-    );
+  const okMods = await upsertBoardTableChunks(supabase, "modules", moduleBaseRows, "id", board.id);
+  if (!okMods) return false;
+
+  // ② 맵 템플릿 필드 upsert (컬럼이 없으면 조용히 무시 — 마이그레이션 미적용 DB에서도 동작)
+  const templateModules = modules.filter((m) => m.mapTemplateBundleId);
+  if (templateModules.length > 0) {
+    const templateRows = templateModules.map((m) => ({
+      id: m.id,
+      map_template_bundle_id: m.mapTemplateBundleId,
+      map_template_id: m.mapTemplateId ?? null,
+      map_pivot: m.mapPivot ?? null,
+      map_scale: m.mapScale ?? null,
+    }));
+    await upsertBoardTableChunks(supabase, "modules", templateRows, "id", board.id, { silent: true });
   }
 
-  if (connections.length > 0) {
-    await supabase.from("connections").insert(
-      connections.map((c) => ({
-        id: c.id,
-        board_id: board.id,
-        user_id: userId,
-        from_module_id: c.fromModuleId,
-        to_module_id: c.toModuleId,
-        from_anchor: c.fromAnchor,
-        to_anchor: c.toAnchor,
-        label: c.label,
-        style: c.style,
-        color: c.color,
-      }))
-    );
+  // ③ 연결선 기본 필드 upsert
+  const connectionBaseRows = connections.map((c) => {
+    const col = (c.color ?? "").trim();
+    return {
+      id: c.id,
+      board_id: board.id,
+      user_id: userId,
+      from_module_id: c.fromModuleId,
+      to_module_id: c.toModuleId,
+      from_anchor: c.fromAnchor,
+      to_anchor: c.toAnchor,
+      label: c.label,
+      style: c.style,
+      color: col.length > 0 ? col : "#94a3b8",
+    };
+  });
+
+  const okConn = await upsertBoardTableChunks(
+    supabase,
+    "connections",
+    connectionBaseRows,
+    "id",
+    board.id
+  );
+  if (!okConn) return false;
+
+  // ④ path_style upsert (컬럼 미존재 시 조용히 무시)
+  const pathStyleConns = connections.filter((c) => c.pathStyle);
+  if (pathStyleConns.length > 0) {
+    const pathStyleRows = pathStyleConns.map((c) => ({
+      id: c.id,
+      path_style: c.pathStyle,
+    }));
+    await upsertBoardTableChunks(supabase, "connections", pathStyleRows, "id", board.id, { silent: true });
   }
 
-  if (groups.length > 0) {
-    await supabase.from("groups").insert(
-      groups.map((g) => ({
-        id: g.id,
-        board_id: board.id,
-        user_id: userId,
-        name: g.name,
-        module_ids: g.moduleIds,
-        position: g.position,
-        size: g.size,
-        color: g.color,
-        is_collapsed: g.isCollapsed,
-        created_at: g.createdAt,
-        updated_at: g.updatedAt,
-        map_template_id: g.mapTemplateId ?? null,
-        map_pivot: g.mapPivot ?? null,
-        map_scale: g.mapScale ?? null,
-      }))
+  const groupRows = groups.map((g) => ({
+    id: g.id,
+    board_id: board.id,
+    user_id: userId,
+    name: g.name,
+    module_ids: g.moduleIds,
+    position: g.position,
+    size: g.size,
+    color: g.color,
+    is_collapsed: g.isCollapsed,
+    created_at: g.createdAt,
+    updated_at: g.updatedAt,
+    map_template_id: g.mapTemplateId ?? null,
+    map_pivot: g.mapPivot ?? null,
+    map_scale: g.mapScale ?? null,
+  }));
+
+  const okGrp = await upsertBoardTableChunks(supabase, "groups", groupRows, "id", board.id);
+  if (!okGrp) return false;
+
+  const keepMod = new Set(modules.map((m) => m.id));
+  const keepConn = new Set(connections.map((c) => c.id));
+  const keepGrp = new Set(groups.map((g) => g.id));
+
+  await deleteBoardChildrenNotInIdSet(supabase, "connections", board.id, keepConn);
+  await deleteBoardChildrenNotInIdSet(supabase, "groups", board.id, keepGrp);
+  await deleteBoardChildrenNotInIdSet(supabase, "modules", board.id, keepMod);
+  return true;
+}
+
+// ── 자동 동기화 헬퍼 ──────────────────────────────────────────────────────
+
+function markDirty(boardId: string): void {
+  if (!isHydrated || !currentUserId) return;
+  dirtyBoardIds.add(boardId);
+  if (autoSyncTimer) clearTimeout(autoSyncTimer);
+  autoSyncTimer = setTimeout(() => {
+    void flushDirtyBoards();
+  }, 2000);
+  useCanvasStore.setState({ autoSyncStatus: "pending" });
+}
+
+async function flushDirtyBoards(): Promise<void> {
+  if (isSyncingAuto || !currentUserId || dirtyBoardIds.size === 0) return;
+  const userId = currentUserId;
+  isSyncingAuto = true;
+  const toSync = [...dirtyBoardIds];
+  dirtyBoardIds.clear();
+  autoSyncTimer = null;
+  useCanvasStore.setState({ autoSyncStatus: "syncing" });
+
+  const supabase = createClient();
+  const { boards } = useCanvasStore.getState();
+  let hasError = false;
+
+  for (const boardId of toSync) {
+    const board = boards.find((b) => b.id === boardId);
+    if (!board) continue;
+    const ok = await pushBoardToSupabase(
+      supabase,
+      userId,
+      normalizeBoardForClient(board),
+      { trusted: true }
     );
+    if (!ok) hasError = true;
+  }
+
+  isSyncingAuto = false;
+  useCanvasStore.setState({ autoSyncStatus: hasError ? "error" : "idle" });
+
+  // 동기화 중에 추가로 dirty가 생겼으면 다시 실행
+  if (dirtyBoardIds.size > 0 && currentUserId) {
+    void flushDirtyBoards();
   }
 }
 
@@ -440,6 +652,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   pendingGroupInvite: null,
   _history: [],
   canvasInnerByBoardId: {},
+  autoSyncStatus: "idle",
 
   setCanvasInnerSize(boardId, width, height) {
     if (width <= 0 || height <= 0) return;
@@ -695,7 +908,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   resetForLogout() {
     debouncedSave = null;
-    debouncedSupabaseSync = null;
+    currentUserId = null;
+    isHydrated = false;
+    dirtyBoardIds.clear();
+    if (autoSyncTimer) clearTimeout(autoSyncTimer);
+    autoSyncTimer = null;
+    isSyncingAuto = false;
     set({
       boards: [],
       activeBoardId: null,
@@ -706,7 +924,22 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       pendingGroupInvite: null,
       _history: [],
       canvasInnerByBoardId: {},
+      autoSyncStatus: "idle",
     });
+  },
+
+  markHydrated(userId: string) {
+    currentUserId = userId;
+    isHydrated = true;
+  },
+
+  exportBackupJson() {
+    const { boards } = get();
+    return JSON.stringify(
+      { version: 1, exportedAt: new Date().toISOString(), boards },
+      null,
+      2
+    );
   },
 
   async hydrateFromSupabase(userId: string) {
@@ -724,11 +957,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }
 
     if (!boardRows || boardRows.length === 0) {
-      // 로그인 첫 사용: localStorage 데이터를 Supabase로 마이그레이션
-      const state = get();
-      if (state.boards.length > 0) {
-        await get().syncToSupabase(userId);
-      }
+      // 원격 보드가 없을 때: 로컬 데이터를 Supabase에 자동 업로드하지 않음.
+      // DB에 반영하려면 사용자가 사이드바「클라우드에 저장」을 눌러야 함.
       return;
     }
 
@@ -780,8 +1010,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       updatedAt: b.updated_at,
       modules: (moduleRows ?? [])
         .filter((m) => m.board_id === b.id)
-        .map((m) =>
-          mapModuleFromSupabaseRow({
+        .map((m) => {
+          const mr = m as {
+            map_template_bundle_id?: string | null;
+            map_template_id?: string | null;
+            map_pivot?: { x: number; y: number } | null;
+            map_scale?: number | null;
+          };
+          return mapModuleFromSupabaseRow({
             id: m.id,
             type: m.type as string,
             position: m.position as Module["position"],
@@ -793,12 +1029,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             data: m.data as Module["data"],
             created_at: m.created_at as string,
             updated_at: m.updated_at as string,
-          })
-        ),
+            map_template_bundle_id: mr.map_template_bundle_id,
+            map_template_id: mr.map_template_id,
+            map_pivot: mr.map_pivot,
+            map_scale: mr.map_scale,
+          });
+        }),
       connections: (connectionRows ?? [])
         .filter((c) => c.board_id === b.id)
-        .map((c) =>
-          mapConnectionFromSupabaseRow({
+        .map((c) => {
+          const cr = c as { path_style?: string | null };
+          return mapConnectionFromSupabaseRow({
             id: c.id,
             from_module_id: c.from_module_id as string,
             to_module_id: c.to_module_id as string,
@@ -807,8 +1048,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
             label: (c.label as string | null) ?? null,
             style: (c.style as Connection["style"] | null) ?? null,
             color: (c.color as string | null) ?? null,
-          })
-        ),
+            path_style: cr.path_style,
+          });
+        }),
       groups: (groupRows ?? [])
         .filter((g) => g.board_id === b.id)
         .map((g) =>
@@ -882,15 +1124,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     // Supabase 기준 데이터로 localStorage도 갱신
     debouncedSave?.();
 
-    if (
-      legacyTopic ||
-      didRepairCategory ||
-      didEnsureTopicPair ||
-      didRecoverTopicMemos ||
-      didClaudeBrandingMigrateRemote
-    ) {
-      await get().syncToSupabase(userId);
-    }
+    // 서버 데이터를 로컬로 보정한 경우에도 Supabase에는 자동 쓰기하지 않음 (명시적「클라우드에 저장」만)
   },
 
   async repairEmptyBoardsFromSupabase(userId: string) {
@@ -921,8 +1155,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       boards: state.boards.map((b) => {
         const fromDbMods = (moduleRows ?? [])
           .filter((m) => m.board_id === b.id)
-          .map((m) =>
-            mapModuleFromSupabaseRow({
+          .map((m) => {
+            const mr = m as {
+              map_template_bundle_id?: string | null;
+              map_template_id?: string | null;
+              map_pivot?: { x: number; y: number } | null;
+              map_scale?: number | null;
+            };
+            return mapModuleFromSupabaseRow({
               id: m.id as string,
               type: m.type as string,
               position: m.position as Module["position"],
@@ -934,13 +1174,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
               data: m.data as Module["data"],
               created_at: m.created_at as string,
               updated_at: m.updated_at as string,
-            })
-          );
+              map_template_bundle_id: mr.map_template_bundle_id,
+              map_template_id: mr.map_template_id,
+              map_pivot: mr.map_pivot,
+              map_scale: mr.map_scale,
+            });
+          });
 
         const fromDbConns = (connectionRows ?? [])
           .filter((c) => c.board_id === b.id)
-          .map((c) =>
-            mapConnectionFromSupabaseRow({
+          .map((c) => {
+            const cr = c as { path_style?: string | null };
+            return mapConnectionFromSupabaseRow({
               id: c.id as string,
               from_module_id: c.from_module_id as string,
               to_module_id: c.to_module_id as string,
@@ -949,8 +1194,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
               label: (c.label as string | null) ?? null,
               style: (c.style as Connection["style"] | null) ?? null,
               color: (c.color as string | null) ?? null,
-            })
-          );
+              path_style: cr.path_style,
+            });
+          });
 
         const fromDbGroups = (groupRows ?? [])
           .filter((g) => g.board_id === b.id)
@@ -1036,20 +1282,31 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const prevC = before.reduce((n, b) => n + (b.connections ?? []).length, 0);
     const nextC = mergedNorm.reduce((n, b) => n + (b.connections ?? []).length, 0);
     console.info(
-      `[MindCanvas] localStorage 복구: 모듈 ${prevM}→${nextM}, 연결 ${prevC}→${nextC} — Supabase에 다시 저장합니다.`
+      `[MindCanvas] localStorage 복구: 모듈 ${prevM}→${nextM}, 연결 ${prevC}→${nextC}. 서버 반영은「클라우드에 저장」으로 진행하세요.`
     );
 
     set({ boards: mergedNorm });
     debouncedSave?.();
-    await get().syncToSupabase(userId);
     return true;
   },
 
   async syncToSupabase(userId: string) {
     const supabase = createClient();
     const { boards } = get();
+    const failed: string[] = [];
     for (const board of boards) {
-      await pushBoardToSupabase(supabase, userId, normalizeBoardForClient(board));
+      const ok = await pushBoardToSupabase(
+        supabase,
+        userId,
+        normalizeBoardForClient(board),
+        { trusted: true }
+      );
+      if (!ok) failed.push(board.name || board.id);
+    }
+    if (failed.length > 0) {
+      throw new Error(
+        `[MindCanvas] Supabase 동기화가 일부 보드에서 실패했습니다: ${failed.join(", ")}`
+      );
     }
   },
 
@@ -1082,7 +1339,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const next = _history.slice(0, -1);
     set({ boards: prev, _history: next });
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    for (const board of prev) markDirty(board.id);
   },
 
   reorderBoardsInCategory(category, fromIndex, toIndex) {
@@ -1110,7 +1367,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       };
     });
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    for (const board of get().boards) {
+      if (normalizeBoardCategory(board) === category) markDirty(board.id);
+    }
   },
 
   addBoard(boardInput) {
@@ -1151,7 +1410,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         };
       });
       debouncedSave?.();
-      debouncedSupabaseSync?.();
+      // topic_notes 보드들을 dirty 처리
+      for (const board of get().boards) {
+        if (normalizeBoardCategory(board) === "topic_notes") markDirty(board.id);
+      }
       return;
     }
 
@@ -1184,7 +1446,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(newBoard.id);
   },
 
   removeBoard(boardId) {
@@ -1217,8 +1479,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
 
     debouncedSave?.();
-    // 삭제는 즉시 처리 (RLS cascade가 처리)
-    createClient().from("boards").delete().eq("id", boardId).then(() => {});
+
+    // Supabase에서 즉시 삭제 (hydration 후 로그인 상태일 때만)
+    if (isHydrated && currentUserId) {
+      const supabase = createClient();
+      void (async () => {
+        await supabase.from("connections").delete().eq("board_id", boardId);
+        await supabase.from("groups").delete().eq("board_id", boardId);
+        await supabase.from("modules").delete().eq("board_id", boardId);
+        await supabase.from("boards").delete().eq("id", boardId);
+      })();
+    }
   },
 
   updateBoard(boardId, updates) {
@@ -1231,7 +1502,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   setActiveBoard(boardId) {
@@ -1287,7 +1558,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       };
     });
     debouncedSave?.();
-    debouncedSupabaseSync?.();
   },
 
   seedTopicNotesDefaults() {
@@ -1316,7 +1586,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       };
     });
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    for (const board of get().boards) {
+      if (normalizeBoardCategory(board) === "topic_notes") markDirty(board.id);
+    }
   },
 
   // ─── 모듈 CRUD ─────────────────────────────────────────────────────────
@@ -1347,7 +1619,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   removeModule(boardId, moduleId) {
@@ -1369,7 +1641,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    createClient().from("modules").delete().eq("id", moduleId).then(() => {});
+    markDirty(boardId);
   },
 
   updateModule(boardId, moduleId, updates) {
@@ -1390,7 +1662,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   duplicateModule(boardId, moduleId) {
@@ -1420,6 +1692,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         zIndex: maxZIndex + 1,
         data: JSON.parse(JSON.stringify(source.data)),
       };
+      delete duplicate.mapTemplateBundleId;
+      delete duplicate.mapTemplateId;
+      delete duplicate.mapPivot;
+      delete duplicate.mapScale;
 
       return {
         boards: state.boards.map((b) =>
@@ -1435,7 +1711,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   expandAdjacentModule(boardId, sourceModuleId, direction, options) {
@@ -1538,7 +1814,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const groups = board.groups ?? [];
     const fromGroup = groups.find((g) => g.moduleIds.includes(sourceModuleId));
     let pendingGroupInvite: CanvasStore["pendingGroupInvite"] = null;
-    if (fromGroup && !fromGroup.moduleIds.includes(newId)) {
+    if (
+      !options?.templateId &&
+      fromGroup &&
+      !fromGroup.moduleIds.includes(newId)
+    ) {
       pendingGroupInvite = {
         groupId: fromGroup.id,
         groupName: fromGroup.name,
@@ -1562,7 +1842,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
     return newId;
   },
 
@@ -1584,7 +1864,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     );
 
     const ids: string[] = [];
-    const newModules: Module[] = def.cells.map((cell, i) => {
+    const draftModules: Module[] = def.cells.map((cell, i) => {
       const id = uuidv4();
       ids.push(id);
       const data =
@@ -1621,6 +1901,20 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       return mod;
     });
 
+    const bb = bboxOfModules(draftModules);
+    const pivot = {
+      x: (bb.minX + bb.maxX) / 2,
+      y: (bb.minY + bb.maxY) / 2,
+    };
+    const bundleId = uuidv4();
+    const newModules = draftModules.map((m) => ({
+      ...m,
+      mapTemplateBundleId: bundleId,
+      mapTemplateId: templateId,
+      mapPivot: pivot,
+      mapScale: 1,
+    }));
+
     const newConnections: Connection[] = def.connections.map((c) => {
       const fromMod = newModules[c.from];
       return {
@@ -1638,36 +1932,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       };
     });
 
-    const bb = bboxOfModules(newModules);
-    const pivot = {
-      x: (bb.minX + bb.maxX) / 2,
-      y: (bb.minY + bb.maxY) / 2,
-    };
-    const PAD = 20;
-    const groupLabel =
-      BRAINSTORM_MAP_OPTIONS.find((o) => o.id === templateId)?.label ?? templateId;
-    const groupId = uuidv4();
-    const newGroup: Group = {
-      id: groupId,
-      name: groupLabel,
-      moduleIds: ids,
-      position: {
-        x: Math.round(bb.minX - PAD),
-        y: Math.round(bb.minY - PAD),
-      },
-      size: {
-        width: Math.round(bb.maxX - bb.minX + PAD * 2),
-        height: Math.round(bb.maxY - bb.minY + PAD * 2),
-      },
-      color: "teal",
-      isCollapsed: false,
-      createdAt: now,
-      updatedAt: now,
-      mapTemplateId: templateId,
-      mapPivot: pivot,
-      mapScale: 1,
-    };
-
     set((st) => ({
       boards: st.boards.map((b) =>
         b.id === boardId
@@ -1675,7 +1939,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
               ...b,
               modules: [...b.modules, ...newModules],
               connections: [...b.connections, ...newConnections],
-              groups: [...(b.groups ?? []), newGroup],
               updatedAt: getTimestamp(),
             }
           : b
@@ -1684,22 +1947,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
-  scaleMapTemplateGroup(boardId, groupId, factor) {
+  scaleMapTemplateGroup(boardId, groupOrBundleId, factor) {
     if (!Number.isFinite(factor) || factor <= 0) return;
 
     const board = get().boards.find((b) => b.id === boardId);
     if (!board || normalizeBoardCategory(board) !== "thinking") return;
-    const g = board?.groups?.find((x) => x.id === groupId);
-    if (!g?.mapTemplateId || g.mapPivot == null) return;
 
-    const pivot = g.mapPivot;
-    const members = g.moduleIds
-      .map((id) => board.modules.find((m) => m.id === id))
-      .filter((m): m is Module => Boolean(m));
-    if (members.length === 0) return;
+    const g = board.groups?.find((x) => x.id === groupOrBundleId);
+    const isLegacyGroup = Boolean(g?.mapTemplateId && g.mapPivot != null);
+
+    const pivot = isLegacyGroup ? g!.mapPivot! : board.modules.find((m) => m.mapTemplateBundleId === groupOrBundleId)?.mapPivot;
+    const members: Module[] = isLegacyGroup
+      ? g!.moduleIds
+          .map((id) => board.modules.find((m) => m.id === id))
+          .filter((m): m is Module => Boolean(m))
+      : board.modules.filter((m) => m.mapTemplateBundleId === groupOrBundleId);
+
+    if (!pivot || members.length === 0) return;
 
     get().pushHistory();
     const ts = getTimestamp();
@@ -1722,20 +1989,32 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       });
     }
 
-    const nextScale = Math.round((g.mapScale ?? 1) * factor * 1000) / 1000;
+    const baseScale = isLegacyGroup ? (g!.mapScale ?? 1) : (members[0]?.mapScale ?? 1);
+    const nextScale = Math.round(baseScale * factor * 1000) / 1000;
 
     set((st) => ({
       boards: st.boards.map((b) => {
         if (b.id !== boardId) return b;
         const modules = b.modules.map((m) => {
           const u = moduleUpdates.get(m.id);
-          return u ? { ...m, ...u, updatedAt: ts } : m;
+          if (u) {
+            return isLegacyGroup
+              ? { ...m, ...u, updatedAt: ts }
+              : {
+                  ...m,
+                  ...u,
+                  mapScale: nextScale,
+                  updatedAt: ts,
+                };
+          }
+          return m;
         });
+        if (!isLegacyGroup) return { ...b, modules, updatedAt: ts };
         const groups = (b.groups ?? []).map((gr) => {
-          if (gr.id !== groupId) return gr;
+          if (gr.id !== groupOrBundleId) return gr;
           const subs = gr.moduleIds
-            .map((id) => modules.find((m) => m.id === id))
-            .filter((m): m is Module => Boolean(m));
+            .map((id) => modules.find((mod) => mod.id === id))
+            .filter((mod): mod is Module => Boolean(mod));
           const box = bboxOfModules(subs);
           const PAD = 20;
           return {
@@ -1757,23 +2036,31 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
-  appendMapToolModule(boardId, groupId, toolId) {
+  appendMapToolModule(boardId, groupOrBundleId, toolId) {
     const board = get().boards.find((b) => b.id === boardId);
     if (!board || normalizeBoardCategory(board) !== "thinking") return;
-    const g = board?.groups?.find((x) => x.id === groupId);
-    if (!g?.mapTemplateId) return;
 
-    const tool = findMapToolDef(g.mapTemplateId, toolId);
+    const g = board.groups?.find((x) => x.id === groupOrBundleId);
+    const isLegacyGroup = Boolean(g?.mapTemplateId);
+    const templateId: BrainstormMapType | undefined = isLegacyGroup
+      ? g!.mapTemplateId
+      : board.modules.find((m) => m.mapTemplateBundleId === groupOrBundleId)?.mapTemplateId;
+
+    if (!templateId) return;
+
+    const tool = findMapToolDef(templateId, toolId);
     if (!tool) return;
 
     get().pushHistory();
     const now = getTimestamp();
-    const members = g.moduleIds
-      .map((id) => board.modules.find((m) => m.id === id))
-      .filter((m): m is Module => Boolean(m));
+    const members: Module[] = isLegacyGroup
+      ? g!.moduleIds
+          .map((id) => board.modules.find((m) => m.id === id))
+          .filter((m): m is Module => Boolean(m))
+      : board.modules.filter((m) => m.mapTemplateBundleId === groupOrBundleId);
     if (members.length === 0) return;
 
     const bb = bboxOfModules(members);
@@ -1844,12 +2131,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       };
     }
 
+    const anchor = members[0];
+    if (!isLegacyGroup && anchor?.mapTemplateBundleId && anchor.mapTemplateId && anchor.mapPivot) {
+      newModule = {
+        ...newModule,
+        mapTemplateBundleId: anchor.mapTemplateBundleId,
+        mapTemplateId: anchor.mapTemplateId,
+        mapPivot: anchor.mapPivot,
+        mapScale: anchor.mapScale ?? 1,
+      };
+    }
+
     set((st) => ({
       boards: st.boards.map((b) => {
         if (b.id !== boardId) return b;
         const modules = [...b.modules, newModule];
+        if (!isLegacyGroup) {
+          return { ...b, modules, updatedAt: now };
+        }
         const groups = (b.groups ?? []).map((gr) => {
-          if (gr.id !== groupId) return gr;
+          if (gr.id !== groupOrBundleId) return gr;
           const nextIds = [...gr.moduleIds, newId];
           const subs = nextIds
             .map((id) => modules.find((m) => m.id === id))
@@ -1875,7 +2176,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   // ─── 커넥션 CRUD ───────────────────────────────────────────────────────
@@ -1927,7 +2228,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     });
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   removeConnection(boardId, connectionId) {
@@ -1945,7 +2246,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    createClient().from("connections").delete().eq("id", connectionId).then(() => {});
+    markDirty(boardId);
   },
 
   updateConnection(boardId, connectionId, updates) {
@@ -1963,7 +2264,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   // ─── 그룹 CRUD ─────────────────────────────────────────────────────────
@@ -1979,7 +2280,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   removeGroup(boardId, groupId) {
@@ -1991,7 +2292,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
-    createClient().from("groups").delete().eq("id", groupId).then(() => {});
+    markDirty(boardId);
   },
 
   updateGroup(boardId, groupId, updates) {
@@ -2009,7 +2310,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       ),
     }));
     debouncedSave?.();
-    debouncedSupabaseSync?.();
+    markDirty(boardId);
   },
 
   // ─── 뷰포트 ────────────────────────────────────────────────────────────
@@ -2022,22 +2323,5 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     debouncedSave?.();
-    debouncedSupabaseSync?.();
   },
 }));
-
-// ── Supabase debounced sync 초기화 (유저 로그인 시 호출) ─────────────────
-
-export function initSupabaseSync(userId: string) {
-  debouncedSupabaseSync = debounce(() => {
-    useCanvasStore.getState().syncToSupabase(userId);
-  }, 1000);
-}
-
-function debounce(fn: () => void, ms: number) {
-  let timer: ReturnType<typeof setTimeout>;
-  return () => {
-    clearTimeout(timer);
-    timer = setTimeout(fn, ms);
-  };
-}

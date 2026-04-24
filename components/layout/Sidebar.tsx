@@ -5,6 +5,7 @@ import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import ThemeToggle from "@/components/ui-overlays/ThemeToggle";
+import CloudSaveButton from "@/components/layout/CloudSaveButton";
 import { boardsForWorkspace } from "@/lib/boardCategory";
 
 interface SidebarProps {
@@ -511,11 +512,12 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* 하단: 유저 + 테마 토글 */}
+      {/* 하단: 클라우드 저장 + 유저 + 테마 토글 */}
       <div
         className="flex flex-col flex-shrink-0"
         style={{ borderTop: "1px solid var(--border)" }}
       >
+        <CloudSaveButton compact={!isExpanded} />
         {/* 유저 섹션 */}
         {user ? (
           <div

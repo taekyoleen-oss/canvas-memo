@@ -5,6 +5,7 @@ import type { Board, BoardCategory } from "@/types";
 import { useCanvasStore } from "@/store/canvas";
 import { useAuthStore } from "@/store/auth";
 import { boardsForWorkspace } from "@/lib/boardCategory";
+import CloudSaveButton from "@/components/layout/CloudSaveButton";
 
 const GROUP_COLOR_DOT: Record<string, string> = {
   yellow: "#fbbf24",
@@ -288,6 +289,7 @@ export default function MobileDrawer({
           className="flex flex-col flex-shrink-0"
           style={{ borderTop: "1px solid var(--border)" }}
         >
+          <CloudSaveButton variant="drawer" />
           {user ? (
             <div
               className="flex items-center justify-between"

@@ -37,6 +37,10 @@ create table if not exists modules (
   is_expanded boolean not null default false,
   is_minimized boolean not null default false,
   data        jsonb not null default '{}',
+  map_template_bundle_id uuid null,
+  map_template_id text null,
+  map_pivot     jsonb null,
+  map_scale     double precision null,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );

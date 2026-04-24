@@ -5,18 +5,16 @@ import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { usePinchZoom } from "@/hooks/usePinchZoom";
 import { screenToCanvas } from "@/lib/canvas/geometry";
-import { getCanvasMapTemplateSize } from "@/lib/canvas/mapTemplates";
 import { computeMemoLikeLayout } from "@/lib/canvas/memoGridLayout";
-import { computeMindMapLayeredLayout } from "@/lib/canvas/mindMapLayout";
 import { normalizeBoardCategory } from "@/lib/boardCategory";
 import { visibleModuleIdsForCanvas } from "@/lib/boardModulePolicy";
-import type { Module, ModuleType, GroupColor, BrainstormMapType } from "@/types";
+import { BRAINSTORM_MAP_OPTIONS } from "@/lib/brainstormMapMeta";
+import type { Module, ModuleType, GroupColor } from "@/types";
 import CanvasGrid from "./CanvasGrid";
 import ConnectionLayer from "./ConnectionLayer";
 import ConnectionPreview from "./ConnectionPreview";
 import GroupLayer from "./GroupLayer";
 import ZoomControls from "./ZoomControls";
-import MapTemplateDialog from "./MapTemplateDialog";
 import MapTemplateWorkspaceChrome from "./MapTemplateWorkspaceChrome";
 import ModuleCardWrapper from "@/components/modules/ModuleCardWrapper";
 
@@ -217,7 +215,6 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const pushHistory = useCanvasStore((s) => s.pushHistory);
   const pendingGroupInvite = useCanvasStore((s) => s.pendingGroupInvite);
   const clearGroupInvite = useCanvasStore((s) => s.clearGroupInvite);
-  const applyMapTemplate = useCanvasStore((s) => s.applyMapTemplate);
   const scaleMapTemplateGroup = useCanvasStore((s) => s.scaleMapTemplateGroup);
   const appendMapToolModule = useCanvasStore((s) => s.appendMapToolModule);
   const setCanvasInnerSize = useCanvasStore((s) => s.setCanvasInnerSize);
@@ -227,8 +224,6 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
-  const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
-
   // 뷰포트
   const [viewport, setViewport] = useState(() =>
     board?.viewport ?? { x: 0, y: 0, zoom: 1 }
@@ -703,51 +698,6 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     });
   }
 
-  /** 연결된 메모·브레인스토밍을 루트(가장 왼쪽) 기준 층 배치 — 생각정리 보드만 */
-  function handleMindMapAutoLayout() {
-    if (!board || normalizeBoardCategory(board) !== "thinking") return;
-
-    const collapsedGroupModuleIds = new Set(
-      (board.groups ?? [])
-        .filter((g) => g.isCollapsed)
-        .flatMap((g) => g.moduleIds)
-    );
-    const groupedIds = new Set((board.groups ?? []).flatMap((g) => g.moduleIds));
-
-    const next = computeMindMapLayeredLayout({
-      modules: board.modules,
-      connections: board.connections ?? [],
-      collapsedModuleIds: collapsedGroupModuleIds,
-      groupedModuleIds: groupedIds,
-    });
-
-    if (next.size === 0) return;
-
-    pushHistory();
-    next.forEach((pos, id) => {
-      updateModule(boardId, id, {
-        position: { x: Math.round(pos.x), y: Math.round(pos.y) },
-      });
-    });
-  }
-
-  /** 맵 템플릿: 여러 모듈·연결을 화면 중심 캔버스 좌표에 삽입 */
-  function handleApplyMapTemplate(templateId: BrainstormMapType) {
-    if (!board) return;
-    const { width, height } = getCanvasMapTemplateSize(templateId);
-    const container = containerRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const c = screenToCanvas(cx, cy, viewport);
-    applyMapTemplate(boardId, templateId, {
-      x: c.x - width / 2,
-      y: c.y - height / 2,
-    });
-    setMapTemplateDialogOpen(false);
-  }
-
   /** 현재 뷰포트(화면)과 겹치는 모듈만 기준으로 줌·팬을 맞춤. 없으면 전체 보기와 동일 */
   function handleFitToView() {
     if (!board) return;
@@ -819,7 +769,10 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     );
 
     const vpX = (W - contentW * newZoom) / 2 - minX * newZoom;
-    const vpY = (H - contentH * newZoom) / 2 - minY * newZoom;
+    /** 하단 줌·툴바(absolute bottom) 때문에 기하 중앙보다 살짝 위가 자연스러움 */
+    const fitToViewUpwardBias = Math.round(36 + H * 0.06);
+    const vpY =
+      (H - contentH * newZoom) / 2 - minY * newZoom - fitToViewUpwardBias;
     const vp = { x: vpX, y: vpY, zoom: newZoom };
     setViewport(vp);
     updateViewport(boardId, vp);
@@ -841,11 +794,32 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     const primaryId =
       selectedMultiIds.length > 0 ? selectedMultiIds[0] : selectedModuleId;
     if (!primaryId) return null;
+    const mod = board.modules.find((m) => m.id === primaryId);
+    if (
+      mod?.mapTemplateBundleId &&
+      mod.mapTemplateId &&
+      mod.mapPivot != null
+    ) {
+      const chromeTitle =
+        BRAINSTORM_MAP_OPTIONS.find((o) => o.id === mod.mapTemplateId)?.label ??
+        mod.mapTemplateId;
+      return {
+        mapContextId: mod.mapTemplateBundleId,
+        templateId: mod.mapTemplateId,
+        chromeTitle,
+        mapScale: mod.mapScale ?? 1,
+      };
+    }
     const grp = (board.groups ?? []).find(
       (g) => g.mapTemplateId && g.moduleIds.includes(primaryId)
     );
     if (!grp?.mapTemplateId) return null;
-    return { group: grp, templateId: grp.mapTemplateId };
+    return {
+      mapContextId: grp.id,
+      templateId: grp.mapTemplateId,
+      chromeTitle: grp.name,
+      mapScale: grp.mapScale ?? 1,
+    };
   }, [board, lassoMode, selectedModuleId, selectedMultiIds]);
 
   if (!board) {
@@ -1040,34 +1014,32 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         onFit={handleFit}
         onFitToView={handleFitToView}
         onAutoLayout={handleAutoLayout}
-        onMindMapLayout={isThinkingBoard ? handleMindMapAutoLayout : undefined}
-        onMapTemplates={
-          isThinkingBoard ? () => setMapTemplateDialogOpen(true) : undefined
+        autoLayoutTitle={
+          isThinkingBoard
+            ? "생각정리 자동 정렬 — 연결·그래프 기준으로 위치만 정렬 (줌/팬은 그대로)"
+            : "메모형 자동 정렬 — 위치만 정렬 (줌/팬은 그대로)"
+        }
+        autoLayoutAriaLabel={
+          isThinkingBoard ? "생각정리 자동 정렬" : "메모형 자동 정렬"
         }
         isConnecting={connectionMode === "connecting"}
         isGroupMode={lassoMode}
         onGroupMode={handleEnterGroupMode}
       />
 
-      <MapTemplateDialog
-        open={mapTemplateDialogOpen}
-        onClose={() => setMapTemplateDialogOpen(false)}
-        onApply={handleApplyMapTemplate}
-      />
-
       {activeMapContext && (
         <MapTemplateWorkspaceChrome
           templateId={activeMapContext.templateId}
-          groupName={activeMapContext.group.name}
-          mapScale={activeMapContext.group.mapScale ?? 1}
+          groupName={activeMapContext.chromeTitle}
+          mapScale={activeMapContext.mapScale}
           onScaleIn={() =>
-            scaleMapTemplateGroup(boardId, activeMapContext.group.id, 1.1)
+            scaleMapTemplateGroup(boardId, activeMapContext.mapContextId, 1.1)
           }
           onScaleOut={() =>
-            scaleMapTemplateGroup(boardId, activeMapContext.group.id, 1 / 1.1)
+            scaleMapTemplateGroup(boardId, activeMapContext.mapContextId, 1 / 1.1)
           }
           onTool={(toolId) =>
-            appendMapToolModule(boardId, activeMapContext.group.id, toolId)
+            appendMapToolModule(boardId, activeMapContext.mapContextId, toolId)
           }
         />
       )}

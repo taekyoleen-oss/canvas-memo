@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useCanvasStore, initSupabaseSync } from "@/store/canvas";
+import { useCanvasStore } from "@/store/canvas";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
-import type { BoardCategory, ModuleType } from "@/types";
+import type { BoardCategory, BrainstormMapType, ModuleType } from "@/types";
 import { boardsForWorkspace, normalizeBoardCategory } from "@/lib/boardCategory";
 import { isModuleTypeAllowedOnCategory } from "@/lib/boardModulePolicy";
 import { screenToCanvas } from "@/lib/canvas/geometry";
@@ -17,6 +17,8 @@ import WorkspaceSwitcher from "@/components/layout/WorkspaceSwitcher";
 import Canvas from "@/components/canvas/Canvas";
 import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
 import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
+import MapTemplateDialog from "@/components/canvas/MapTemplateDialog";
+import { defaultMapTemplateOrigin } from "@/lib/canvas/mapTemplatePlacement";
 
 interface AddBoardDialogProps {
   isOpen: boolean;
@@ -241,6 +243,8 @@ export default function Home() {
     repairEmptyBoardsFromSupabase,
     recoverFromBrowserCaches,
     resetForLogout,
+    applyMapTemplate,
+    markHydrated,
   } = useCanvasStore();
   const { user, loading: authLoading, init: initAuth } = useAuthStore();
   const [addBoardState, setAddBoardState] = useState<{
@@ -251,6 +255,7 @@ export default function Home() {
   const [showSearch, setShowSearch] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
   const exitConfirmedRef = useRef(false);
 
   // auth 초기화 (1회)
@@ -269,7 +274,6 @@ export default function Home() {
 
     let cancelled = false;
     void (async () => {
-      initSupabaseSync(user.id);
       const supabase = createClient();
       const { count, error } = await supabase
         .from("boards")
@@ -298,7 +302,10 @@ export default function Home() {
         await recoverFromBrowserCaches(user.id);
       }
 
-      if (!cancelled) setAppReady(true);
+      if (!cancelled) {
+        markHydrated(user.id); // hydration 완료 → 이후 변경분은 Supabase에 자동 동기화
+        setAppReady(true);
+      }
     })();
 
     return () => {
@@ -312,13 +319,18 @@ export default function Home() {
     repairEmptyBoardsFromSupabase,
     recoverFromBrowserCaches,
     resetForLogout,
+    markHydrated,
   ]);
 
   // 미들웨어가 없는 환경(로컬 env 미설정 등)에서도 비로그인 시 로그인으로 이동
+  // HMR 직후 App Router가 아직 준비되기 전에 replace가 실행되면
+  // "Router action dispatched before initialization"가 나므로 다음 태스크로 미룸
   useEffect(() => {
-    if (!authLoading && appReady && !user) {
+    if (authLoading || !appReady || user) return;
+    const id = window.setTimeout(() => {
       router.replace("/auth/login");
-    }
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [authLoading, appReady, user, router]);
 
   // Ctrl+K: 검색 열기
@@ -335,8 +347,10 @@ export default function Home() {
 
   // 뒤로가기(Back) 버튼 → 항상 앱 종료 확인 다이얼로그 표시
   useEffect(() => {
-    // 더미 히스토리 상태를 쌓아 뒤로가기를 가로챔
-    window.history.pushState({ appGuard: true }, "");
+    // App Router 초기화와 겹치지 않도록 더미 히스토리는 다음 틱에 쌓음 (HMR 안정화)
+    const initId = window.setTimeout(() => {
+      window.history.pushState({ appGuard: true }, "");
+    }, 0);
 
     function handlePopState() {
       if (exitConfirmedRef.current) {
@@ -357,6 +371,7 @@ export default function Home() {
     window.addEventListener("popstate", handlePopState);
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => {
+      window.clearTimeout(initId);
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
@@ -395,6 +410,16 @@ export default function Home() {
             : "#6366F1",
       category,
     });
+  }
+
+  function handleApplyMapTemplate(templateId: BrainstormMapType) {
+    if (!activeBoardId) return;
+    applyMapTemplate(
+      activeBoardId,
+      templateId,
+      defaultMapTemplateOrigin(activeBoard, templateId)
+    );
+    setMapTemplateDialogOpen(false);
   }
 
   function handleAddModule(
@@ -583,6 +608,11 @@ export default function Home() {
               boardCategory={activeBoardCategory}
               onAdd={handleAddModule}
               onSearch={() => setShowSearch(true)}
+              onMapTemplates={
+                activeBoardCategory === "thinking"
+                  ? () => setMapTemplateDialogOpen(true)
+                  : undefined
+              }
             />
           ) : null}
         </div>
@@ -635,6 +665,11 @@ export default function Home() {
                 boardCategory={activeBoardCategory}
                 onAdd={handleAddModule}
                 onSearch={() => setShowSearch(true)}
+                onMapTemplates={
+                  activeBoardCategory === "thinking"
+                    ? () => setMapTemplateDialogOpen(true)
+                    : undefined
+                }
               />
             ) : (
               <div
@@ -669,6 +704,12 @@ export default function Home() {
 
       {/* 모듈 검색 */}
       <ModuleSearch isOpen={showSearch} onClose={() => setShowSearch(false)} />
+
+      <MapTemplateDialog
+        open={mapTemplateDialogOpen}
+        onClose={() => setMapTemplateDialogOpen(false)}
+        onApply={handleApplyMapTemplate}
+      />
 
       {/* 앱 종료 확인 다이얼로그 */}
       {showExitConfirm && (
