@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { ensureInboxBoard } from "@/lib/inboxBoard";
 
 interface AuthStore {
   user: User | null;
@@ -20,12 +21,16 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
     // 현재 세션 확인
     supabase.auth.getUser().then(({ data }) => {
-      set({ user: data.user ?? null, loading: false });
+      const user = data.user ?? null;
+      set({ user, loading: false });
+      if (user) ensureInboxBoard(user.id).catch(console.error);
     });
 
     // 세션 변화 구독
     supabase.auth.onAuthStateChange((_event, session) => {
-      set({ user: session?.user ?? null, loading: false });
+      const user = session?.user ?? null;
+      set({ user, loading: false });
+      if (user) ensureInboxBoard(user.id).catch(console.error);
     });
   },
 

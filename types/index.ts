@@ -29,6 +29,8 @@ export interface Board {
   connections: Connection[];
   groups: Group[];
   viewport: { x: number; y: number; zoom: number };
+  /** Chrome 확장 프로그램 스크랩이 기본 착지하는 받은 메모 보드 */
+  isInbox?: boolean;
 }
 
 export type ModuleType =

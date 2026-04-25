@@ -476,6 +476,7 @@ async function pushBoardToSupabase(
     color: board.color,
     board_category: boardCategoryCol,
     sidebar_order: board.sidebarOrder ?? 0,
+    is_inbox: board.isInbox ?? false,
     viewport: board.viewport,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
@@ -1024,6 +1025,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         typeof (b as { sidebar_order?: number }).sidebar_order === "number"
           ? (b as { sidebar_order: number }).sidebar_order
           : 0,
+      isInbox: (b as { is_inbox?: boolean }).is_inbox ?? false,
       viewport: b.viewport as Board["viewport"],
       createdAt: b.created_at,
       updatedAt: b.updated_at,
