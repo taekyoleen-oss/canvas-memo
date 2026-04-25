@@ -1093,9 +1093,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
 
     const boardsFromDbNorm = normalizeBoardsForClient(boardsFromDb);
-    // Supabase의 board_category는 신뢰할 수 있는 단일 진실 소스 — 휴리스틱 재분류 생략
-    const legacyTopic = hasLegacyTopicGroupedBoard(boardsFromDbNorm);
-    let boards = migrateLegacyTopicGroupedBoards(boardsFromDbNorm);
+    // board_category 컬럼이 없거나 null인 레거시 행은 아이콘·레이아웃 기반으로 재분류
+    const boardsRepaired = repairMisclassifiedTopicNotesBoards(boardsFromDbNorm);
+    const legacyTopic = hasLegacyTopicGroupedBoard(boardsRepaired);
+    let boards = migrateLegacyTopicGroupedBoards(boardsRepaired);
     const claudeBrandRemote = applyClaudeMemoBrandingMigration(boards, getTimestamp());
     if (claudeBrandRemote.changed) boards = claudeBrandRemote.boards;
     const didClaudeBrandingMigrateRemote = claudeBrandRemote.changed;

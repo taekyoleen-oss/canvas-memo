@@ -484,14 +484,16 @@ function isLegacyTopicTwoGroupLayout(b: Board): boolean {
 /**
  * 주제별 시드(그룹 없음)인데 `category`가 memo_schedule 로만 저장된 경우.
  * 이름만으로는 메모/할일 탭의 동명 보드와 구분할 수 없으므로 **시드 전용 아이콘**만 사용한다.
+ * 모듈이 여러 개 추가된 경우에도 memo 타입만 있으면 주제별로 복구한다.
  */
 function isLikelyTopicStarterBoard(b: Board): boolean {
   const groups = b.groups ?? [];
   if (groups.length > 0) return false;
-  const mods = b.modules ?? [];
-  if (mods.length !== 1 || mods[0]?.type !== "memo") return false;
   const icon = b.icon ?? "";
-  return icon === "🧩" || icon === "🖱️";
+  if (icon !== "🧩" && icon !== "🖱️") return false;
+  const mods = b.modules ?? [];
+  // 모듈이 없거나 memo 타입만 있어야 주제별로 복구
+  return mods.length === 0 || mods.every((m) => m.type === "memo");
 }
 
 /**
