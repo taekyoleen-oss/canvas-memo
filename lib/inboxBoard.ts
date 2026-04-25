@@ -28,7 +28,7 @@ export async function ensureInboxBoard(userId: string): Promise<string | null> {
     icon: "📥",
     color: "#6366f1",
     board_category: "memo_schedule",
-    sidebar_order: 0,
+    sidebar_order: -1,  // 메모/할일 카테고리 최상단 고정
     is_inbox: true,
     viewport: { x: 0, y: 0, zoom: 1 },
     created_at: now,

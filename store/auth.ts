@@ -3,7 +3,6 @@
 import { create } from "zustand";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import { ensureInboxBoard } from "@/lib/inboxBoard";
 
 interface AuthStore {
   user: User | null;
@@ -23,14 +22,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
     supabase.auth.getUser().then(({ data }) => {
       const user = data.user ?? null;
       set({ user, loading: false });
-      if (user) ensureInboxBoard(user.id).catch(console.error);
+      // '받은 메모' 보드는 add-in Browser 연결 시 자동 생성 — canvas-memo 자체에서는 생성하지 않음
     });
 
     // 세션 변화 구독
     supabase.auth.onAuthStateChange((_event, session) => {
       const user = session?.user ?? null;
       set({ user, loading: false });
-      if (user) ensureInboxBoard(user.id).catch(console.error);
     });
   },
 
