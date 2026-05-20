@@ -6,15 +6,36 @@ import { useConnectionStore } from "@/store/connection";
 import { usePinchZoom } from "@/hooks/usePinchZoom";
 import { screenToCanvas } from "@/lib/canvas/geometry";
 import { computeMemoLikeLayout } from "@/lib/canvas/memoGridLayout";
+import {
+  computeArrangeLayout,
+  type ArrangeMode,
+  type ArrangeSortKey,
+} from "@/lib/canvas/arrangeLayouts";
 import { normalizeBoardCategory } from "@/lib/boardCategory";
-import { visibleModuleIdsForCanvas } from "@/lib/boardModulePolicy";
+import {
+  isModuleTypeAllowedOnCategory,
+  visibleModuleIdsForCanvas,
+} from "@/lib/boardModulePolicy";
 import { BRAINSTORM_MAP_OPTIONS } from "@/lib/brainstormMapMeta";
-import type { Module, ModuleType, GroupColor } from "@/types";
+import {
+  fileToDataUrl,
+  getImageFileFromClipboardEvent,
+} from "@/lib/imagePasteClipboard";
+import { fetchOGMeta } from "@/lib/og/fetcher";
+import type {
+  Module,
+  ModuleType,
+  GroupColor,
+  ImageData,
+  LinkData,
+  MemoData,
+} from "@/types";
 import CanvasGrid from "./CanvasGrid";
 import ConnectionLayer from "./ConnectionLayer";
 import ConnectionPreview from "./ConnectionPreview";
 import GroupLayer from "./GroupLayer";
 import ZoomControls from "./ZoomControls";
+import ArrangeMenu from "./ArrangeMenu";
 import MapTemplateWorkspaceChrome from "./MapTemplateWorkspaceChrome";
 import ModuleCardWrapper from "@/components/modules/ModuleCardWrapper";
 
@@ -199,12 +220,33 @@ function GroupInviteDialog({ groupName, onConfirm, onCancel }: GroupInviteDialog
   );
 }
 
+interface ModuleClipboardEntry {
+  type: Module["type"];
+  data: Module["data"];
+  size: Module["size"];
+  color: Module["color"];
+  shape?: Module["shape"];
+  isExpanded: boolean;
+  isMinimized?: boolean;
+  /** 기준 좌표(=클립보드 안 모듈들 중 최소 좌표)에서의 오프셋 */
+  offset: { x: number; y: number };
+}
+/** 캔버스 내 다중 모듈 클립보드. 보드 간 이동/붙여넣기를 위해 모듈 외부에 둠 */
+let _canvasMultiClipboard: { modules: ModuleClipboardEntry[] } | null = null;
+
+/** 문자열 전체가 단일 URL인지 — 공백·줄바꿈을 포함한 본문은 false */
+const URL_REGEX = /^https?:\/\/[\w.-]+(?:\.[\w.-]+)+[^\s]*$/i;
+function isWholeStringSingleUrl(text: string): boolean {
+  return URL_REGEX.test(text.trim());
+}
+
 // ── 메인 Canvas 컴포넌트 ────────────────────────────────────────────────
 export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const board = useCanvasStore((s) => s.boards.find((b) => b.id === boardId));
   const updateViewport = useCanvasStore((s) => s.updateViewport);
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
+  const addModulesBatch = useCanvasStore((s) => s.addModulesBatch);
   const addGroup = useCanvasStore((s) => s.addGroup);
   const updateGroup = useCanvasStore((s) => s.updateGroup);
   const focusGroupId = useCanvasStore((s) => s.focusGroupId);
@@ -279,6 +321,20 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const [pendingModuleIds, setPendingModuleIds] = useState<string[]>([]);
   const [pendingBounds, setPendingBounds] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [showGroupDialog, setShowGroupDialog] = useState(false);
+
+  // ── 정렬 메뉴 ──────────────────────────────────────────────────
+  const [arrangeMenuAnchor, setArrangeMenuAnchor] = useState<
+    { x: number; y: number } | null
+  >(null);
+  const [arrangeMode, setArrangeMode] = useState<ArrangeMode>("grid");
+  const [arrangeSortKey, setArrangeSortKey] = useState<ArrangeSortKey>("updated");
+  // 마지막 적용 안내 토스트
+  const [arrangeFlash, setArrangeFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!arrangeFlash) return;
+    const id = window.setTimeout(() => setArrangeFlash(null), 2200);
+    return () => window.clearTimeout(id);
+  }, [arrangeFlash]);
 
   function handleEnterGroupMode() {
     setLassoMode(true);
@@ -433,6 +489,214 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     setFocusModule(null);
   }, [focusModuleId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 다중 모듈 복사/붙여넣기 콜백 ─────────────────────────────────
+  /** 현재 선택된 모듈(단일+다중)을 클립보드에 저장. 화면 좌상단 기준 상대 좌표로 보관 */
+  const copySelectedModules = useCallback((): number => {
+    if (!board) return 0;
+    const ids = new Set<string>([
+      ...selectedMultiIds,
+      ...(selectedModuleId ? [selectedModuleId] : []),
+    ]);
+    if (ids.size === 0) return 0;
+    const collapsedIds = new Set(
+      (board.groups ?? [])
+        .filter((g) => g.isCollapsed)
+        .flatMap((g) => g.moduleIds)
+    );
+    const targets = board.modules.filter(
+      (m) => ids.has(m.id) && !collapsedIds.has(m.id)
+    );
+    if (targets.length === 0) return 0;
+    const minX = Math.min(...targets.map((m) => m.position.x));
+    const minY = Math.min(...targets.map((m) => m.position.y));
+    _canvasMultiClipboard = {
+      modules: targets.map((m) => ({
+        type: m.type,
+        data: JSON.parse(JSON.stringify(m.data)),
+        size: { ...m.size },
+        color: m.color,
+        shape: m.shape,
+        isExpanded: m.isExpanded,
+        isMinimized: m.isMinimized,
+        offset: { x: m.position.x - minX, y: m.position.y - minY },
+      })),
+    };
+    return targets.length;
+  }, [board, selectedMultiIds, selectedModuleId]);
+
+  /** 클립보드 모듈을 캔버스 중앙(또는 origin 지정 시 거기)에 붙여넣기 — 단일 undo 단위 */
+  const pasteClipboardModules = useCallback(
+    (origin?: { x: number; y: number }) => {
+      if (!_canvasMultiClipboard || _canvasMultiClipboard.modules.length === 0) {
+        return 0;
+      }
+      const container = containerRef.current;
+      if (!container) return 0;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const center = screenToCanvas(cw / 2, ch / 2, viewport);
+      const cat = board ? normalizeBoardCategory(board) : "memo_schedule";
+
+      const baseEntries = _canvasMultiClipboard.modules.filter((e) =>
+        isModuleTypeAllowedOnCategory(e.type, cat)
+      );
+      if (baseEntries.length === 0) return 0;
+
+      const w = Math.max(...baseEntries.map((e) => e.size.width));
+      const h = Math.max(...baseEntries.map((e) => e.size.height));
+      const ox = origin ? origin.x : Math.round(center.x - w / 2);
+      const oy = origin ? origin.y : Math.round(center.y - h / 2);
+
+      const maxZIndex =
+        board?.modules.reduce(
+          (max, m) => Math.max(max, Number(m.zIndex) || 0),
+          0
+        ) ?? 0;
+
+      const newIds = addModulesBatch(
+        boardId,
+        baseEntries.map((e, i) => ({
+          type: e.type,
+          position: { x: ox + e.offset.x + 18, y: oy + e.offset.y + 18 },
+          size: { ...e.size },
+          zIndex: maxZIndex + 1 + i,
+          color: e.color,
+          shape: e.shape,
+          isExpanded: e.isExpanded,
+          isMinimized: e.isMinimized,
+          data: JSON.parse(JSON.stringify(e.data)),
+        }))
+      );
+
+      if (newIds.length > 0) {
+        setSelectedMultiIds(newIds);
+        setSelectedModuleId(null);
+      }
+      return newIds.length;
+    },
+    [board, boardId, viewport, addModulesBatch]
+  );
+
+  /** 외부 클립보드/드롭 페이로드를 받아 적절한 모듈을 만든다 */
+  const createModuleFromPayload = useCallback(
+    async (payload: {
+      file?: File | null;
+      text?: string | null;
+      url?: string | null;
+      canvasPos?: { x: number; y: number };
+    }) => {
+      if (!board) return false;
+      const cat = normalizeBoardCategory(board);
+      const container = containerRef.current;
+      if (!container) return false;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const pos =
+        payload.canvasPos ?? screenToCanvas(cw / 2, ch / 2, viewport);
+
+      const file = payload.file ?? null;
+      if (file && file.type.startsWith("image/")) {
+        if (!isModuleTypeAllowedOnCategory("image", cat)) {
+          setArrangeFlash("이 보드에는 이미지 모듈을 추가할 수 없어요");
+          return false;
+        }
+        try {
+          const src = await fileToDataUrl(file);
+          onAddModule("image", {
+            x: Math.round(pos.x - 130),
+            y: Math.round(pos.y - 90),
+          });
+          const latest = useCanvasStore
+            .getState()
+            .boards.find((b) => b.id === boardId);
+          const last = latest?.modules?.[latest.modules.length - 1];
+          if (last?.type === "image") {
+            updateModule(boardId, last.id, {
+              data: { ...(last.data as ImageData), src },
+            });
+          }
+          setArrangeFlash("붙여넣은 이미지로 새 카드를 만들었어요");
+          return true;
+        } catch (err) {
+          console.warn("[MindCanvas] 이미지 붙여넣기 실패", err);
+          return false;
+        }
+      }
+
+      const text = payload.text?.trim() ?? "";
+      const url =
+        payload.url ?? (text && isWholeStringSingleUrl(text) ? text : null);
+
+      if (url) {
+        if (!isModuleTypeAllowedOnCategory("link", cat)) {
+          setArrangeFlash("이 보드에는 링크 모듈을 추가할 수 없어요");
+          return false;
+        }
+        onAddModule("link", {
+          x: Math.round(pos.x - 130),
+          y: Math.round(pos.y - 30),
+        });
+        const latest = useCanvasStore
+          .getState()
+          .boards.find((b) => b.id === boardId);
+        const last = latest?.modules?.[latest.modules.length - 1];
+        if (last?.type === "link") {
+          updateModule(boardId, last.id, {
+            data: { ...(last.data as LinkData), url },
+          });
+          void fetchOGMeta(url).then((meta) => {
+            const cur = useCanvasStore
+              .getState()
+              .boards.find((b) => b.id === boardId)
+              ?.modules.find((m) => m.id === last.id);
+            if (!cur) return;
+            updateModule(boardId, last.id, {
+              data: {
+                ...(cur.data as LinkData),
+                url,
+                title: meta.title || (cur.data as LinkData).title || "",
+                description: meta.description || "",
+                favicon: meta.favicon || "",
+                thumbnail: meta.thumbnail || "",
+              },
+            });
+          });
+        }
+        setArrangeFlash("링크 카드를 만들었어요 (자동으로 미리보기 가져오는 중)");
+        return true;
+      }
+
+      if (text) {
+        if (!isModuleTypeAllowedOnCategory("memo", cat)) {
+          setArrangeFlash("이 보드에는 메모 모듈을 추가할 수 없어요");
+          return false;
+        }
+        onAddModule("memo", {
+          x: Math.round(pos.x - 130),
+          y: Math.round(pos.y - 60),
+        });
+        const latest = useCanvasStore
+          .getState()
+          .boards.find((b) => b.id === boardId);
+        const last = latest?.modules?.[latest.modules.length - 1];
+        if (last?.type === "memo") {
+          const html = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\n/g, "<br>");
+          updateModule(boardId, last.id, {
+            data: { ...(last.data as MemoData), content: html },
+          });
+        }
+        setArrangeFlash("붙여넣은 텍스트로 메모를 만들었어요");
+        return true;
+      }
+      return false;
+    },
+    [board, boardId, viewport, onAddModule, updateModule]
+  );
+
   // ── 키보드 단축키 ────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -461,6 +725,33 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         return;
       }
 
+      // 모듈 내부(예: ImageModule 포커스)에서는 모듈 자체 동작 우선 — 캔버스 단축키 양보
+      const focusInsideModule =
+        active instanceof Element &&
+        !!active.closest("[data-module-wrapper-id]");
+
+      // Ctrl+C: 선택한 모듈을 캔버스 클립보드에 복사 (다중 포함)
+      if ((e.ctrlKey || e.metaKey) && e.key === "c" && !isTyping && !focusInsideModule) {
+        const count = copySelectedModules();
+        if (count > 0) {
+          e.preventDefault();
+          setArrangeFlash(`모듈 ${count}개를 복사했어요 — Ctrl+V로 붙여넣기`);
+        }
+        return;
+      }
+
+      // Ctrl+V: 캔버스 클립보드에서 붙여넣기 (외부 클립보드는 onPaste에서 처리)
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && !isTyping && !focusInsideModule) {
+        if (_canvasMultiClipboard && _canvasMultiClipboard.modules.length > 0) {
+          const n = pasteClipboardModules();
+          if (n > 0) {
+            e.preventDefault();
+            setArrangeFlash(`모듈 ${n}개를 붙여넣었어요`);
+          }
+        }
+        return;
+      }
+
       if ((e.key === "Delete" || e.key === "Backspace") && !isTyping) {
         if (selectedMultiIds.length > 0) {
           if (window.confirm(`선택한 ${selectedMultiIds.length}개 모듈을 삭제하시겠습니까?`)) {
@@ -477,7 +768,141 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedModuleId, selectedMultiIds, boardId, cancelConnecting, removeModule, undo]);
+  }, [
+    selectedModuleId,
+    selectedMultiIds,
+    boardId,
+    cancelConnecting,
+    removeModule,
+    undo,
+    copySelectedModules,
+    pasteClipboardModules,
+  ]);
+
+  // ── 외부 클립보드 붙여넣기 (이미지·URL·텍스트) ─────────────────
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      const active = document.activeElement;
+      const isTyping =
+        active &&
+        (active.tagName === "INPUT" ||
+          active.tagName === "TEXTAREA" ||
+          (active as HTMLElement).isContentEditable);
+      if (isTyping) return; // 입력 필드 안에서는 기본 붙여넣기 유지
+      // 모듈 내부(ImageModule 등)에서 자체 onPaste를 처리한 경우 캔버스는 양보
+      if (active instanceof Element && active.closest("[data-module-wrapper-id]"))
+        return;
+      const target = e.target;
+      if (target instanceof Element && target.closest("[data-module-wrapper-id]"))
+        return;
+      if (!board) return;
+      const cd = e.clipboardData;
+      if (!cd) return;
+
+      // 1) 이미지 파일 우선
+      const file = getImageFileFromClipboardEvent({ clipboardData: cd });
+      if (file) {
+        e.preventDefault();
+        void createModuleFromPayload({ file });
+        return;
+      }
+
+      // 2) URL (text/uri-list 또는 텍스트 전체가 URL)
+      const uriList = cd.getData("text/uri-list");
+      const plainText = cd.getData("text/plain");
+      const uriCandidate =
+        (uriList && uriList.split(/\r?\n/).find((l) => l && !l.startsWith("#"))) ||
+        null;
+      if (uriCandidate && URL_REGEX.test(uriCandidate.trim())) {
+        e.preventDefault();
+        void createModuleFromPayload({ url: uriCandidate.trim() });
+        return;
+      }
+
+      // 3) 텍스트 전체가 단일 URL인 경우 → 링크
+      if (plainText && isWholeStringSingleUrl(plainText)) {
+        e.preventDefault();
+        void createModuleFromPayload({ url: plainText.trim() });
+        return;
+      }
+
+      // 4) 일반 텍스트 → 메모 (단, 캔버스 자체 클립보드가 있으면 그쪽이 우선되도록 그대로 둠)
+      if (plainText && !_canvasMultiClipboard) {
+        e.preventDefault();
+        void createModuleFromPayload({ text: plainText });
+        return;
+      }
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [board, createModuleFromPayload]);
+
+  // ── 드래그 & 드롭 (이미지·URL·텍스트) ──────────────────────────
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer) return;
+    const types = Array.from(e.dataTransfer.types ?? []);
+    const hasUsefulPayload =
+      types.includes("Files") ||
+      types.includes("text/uri-list") ||
+      types.includes("text/plain");
+    if (!hasUsefulPayload) return;
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    setIsDragOver(true);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (!isDragOver) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave() {
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setIsDragOver(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    if (!isDragOver) return;
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const pos = rect
+      ? screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, viewport)
+      : undefined;
+
+    if (dt.files && dt.files.length > 0) {
+      const imageFile = Array.from(dt.files).find((f) =>
+        f.type.startsWith("image/")
+      );
+      if (imageFile) {
+        void createModuleFromPayload({ file: imageFile, canvasPos: pos });
+        return;
+      }
+    }
+    const uriList = dt.getData("text/uri-list");
+    const candidate =
+      (uriList && uriList.split(/\r?\n/).find((l) => l && !l.startsWith("#"))) ||
+      null;
+    if (candidate && URL_REGEX.test(candidate.trim())) {
+      void createModuleFromPayload({ url: candidate.trim(), canvasPos: pos });
+      return;
+    }
+    const text = dt.getData("text/plain");
+    if (text) {
+      if (isWholeStringSingleUrl(text)) {
+        void createModuleFromPayload({ url: text.trim(), canvasPos: pos });
+      } else {
+        void createModuleFromPayload({ text, canvasPos: pos });
+      }
+    }
+  }
 
   // ── 커넥션 프리뷰 포인터 이동 ───────────────────────────────────
   function handlePointerMove(e: React.PointerEvent) {
@@ -698,6 +1123,84 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     });
   }
 
+  /** ▦ 정렬 메뉴 — 격자/목록/종류별/컴팩트로 위치만 일괄 재배치 + 전체 보기 줌 */
+  function handleArrange(mode: ArrangeMode, sortKey: ArrangeSortKey) {
+    if (!board) return;
+    const container = containerRef.current;
+    const cw = container?.clientWidth ?? 960;
+    const ch = container?.clientHeight ?? 600;
+
+    const collapsedGroupModuleIds = new Set(
+      (board.groups ?? [])
+        .filter((g) => g.isCollapsed)
+        .flatMap((g) => g.moduleIds)
+    );
+    const groupedIds = new Set(
+      (board.groups ?? []).flatMap((g) => g.moduleIds)
+    );
+
+    const result = computeArrangeLayout({
+      modules: board.modules,
+      collapsedModuleIds: collapsedGroupModuleIds,
+      groupedModuleIds: groupedIds,
+      containerWidthPx: cw,
+      // 현재 zoom과 무관하게 1배 기준으로 배치 — 줌인 상태에서도 다열 격자가 나오도록.
+      // 배치가 끝난 뒤 contentBox에 맞춰 자동 줌·팬으로 보여 줌.
+      zoom: 1,
+      mode,
+      sortKey,
+    });
+
+    if (result.positions.size === 0) {
+      setArrangeFlash("정렬할 모듈이 없어요");
+      return;
+    }
+
+    pushHistory();
+    result.positions.forEach((pos, id) => {
+      updateModule(boardId, id, { position: pos });
+    });
+
+    setArrangeMode(mode);
+    setArrangeSortKey(sortKey);
+
+    // 정렬 결과 전체가 보이도록 자동 줌·팬
+    const PADDING = 56;
+    const cb = result.contentBox;
+    if (cb.width > 0 && cb.height > 0) {
+      const zoom = Math.min(
+        MAX_ZOOM,
+        Math.max(
+          MIN_ZOOM,
+          Math.min((cw - PADDING * 2) / cb.width, (ch - PADDING * 2) / cb.height)
+        )
+      );
+      const x = (cw - cb.width * zoom) / 2 - cb.x * zoom;
+      const y = PADDING - cb.y * zoom; // 위쪽 기준 정렬 (목록·격자 모두 위에서 시작)
+      const vp = { x, y, zoom };
+      setViewport(vp);
+      updateViewport(boardId, vp);
+    }
+
+    const modeLabel =
+      mode === "grid"
+        ? "격자"
+        : mode === "list"
+          ? "목록"
+          : mode === "byType"
+            ? "종류별"
+            : "컴팩트";
+    const sortLabel =
+      sortKey === "created"
+        ? "만든순"
+        : sortKey === "updated"
+          ? "최근 수정순"
+          : sortKey === "title"
+            ? "제목순"
+            : "종류순";
+    setArrangeFlash(`${modeLabel} · ${sortLabel}으로 정렬했어요`);
+  }
+
   /** 현재 뷰포트(화면)과 겹치는 모듈만 기준으로 줌·팬을 맞춤. 없으면 전체 보기와 동일 */
   function handleFitToView() {
     if (!board) return;
@@ -863,6 +1366,10 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
       onPointerMove={handlePointerMove}
       onClick={handleCanvasClick}
       onDoubleClick={handleCanvasDoubleClick}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       {/* 도트 그리드 */}
       <CanvasGrid viewport={viewport} />
@@ -1022,10 +1529,80 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         autoLayoutAriaLabel={
           isThinkingBoard ? "생각정리 자동 정렬" : "메모형 자동 정렬"
         }
+        onArrange={(anchor) => setArrangeMenuAnchor(anchor)}
+        arrangeActive={arrangeMenuAnchor !== null}
         isConnecting={connectionMode === "connecting"}
         isGroupMode={lassoMode}
         onGroupMode={handleEnterGroupMode}
       />
+
+      {arrangeMenuAnchor && (
+        <ArrangeMenu
+          anchorBottomLeft={arrangeMenuAnchor}
+          initialMode={arrangeMode}
+          initialSortKey={arrangeSortKey}
+          onApply={handleArrange}
+          onClose={() => setArrangeMenuAnchor(null)}
+        />
+      )}
+
+      {/* 드래그&드롭 오버레이 */}
+      {isDragOver && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(99,102,241,0.10)",
+            border: "3px dashed var(--primary)",
+            borderRadius: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 90,
+          }}
+        >
+          <div
+            style={{
+              background: "var(--surface-elevated)",
+              border: "1px solid var(--primary)",
+              color: "var(--primary)",
+              padding: "10px 18px",
+              borderRadius: 10,
+              fontSize: 14,
+              fontWeight: 600,
+              boxShadow: "var(--shadow-lg)",
+            }}
+          >
+            ✨ 여기에 놓으면 모듈로 추가돼요 (이미지·링크·텍스트)
+          </div>
+        </div>
+      )}
+
+      {/* 정렬·붙여넣기 안내 토스트 */}
+      {arrangeFlash && (
+        <div
+          role="status"
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 95,
+            background: "var(--surface-elevated)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
+            padding: "8px 14px",
+            borderRadius: 10,
+            boxShadow: "var(--shadow-md)",
+            fontSize: 12,
+            fontWeight: 500,
+            maxWidth: "min(340px, 70vw)",
+            pointerEvents: "none",
+          }}
+        >
+          {arrangeFlash}
+        </div>
+      )}
 
       {activeMapContext && (
         <MapTemplateWorkspaceChrome

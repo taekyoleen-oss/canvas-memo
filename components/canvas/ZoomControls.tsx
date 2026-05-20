@@ -20,6 +20,9 @@ interface ZoomControlsProps {
   /** 자동 정렬 툴팁·접근성 라벨 (워크스페이스별 문구) */
   autoLayoutTitle?: string;
   autoLayoutAriaLabel?: string;
+  /** ▦ 정렬 메뉴 열기 — 기준이 되는 버튼의 화면 좌표(left, bottom)를 전달 */
+  onArrange?: (anchor: { x: number; y: number }) => void;
+  arrangeActive?: boolean;
   isConnecting: boolean;
   isGroupMode?: boolean;
   onGroupMode?: () => void;
@@ -34,10 +37,13 @@ export default function ZoomControls({
   onAutoLayout,
   autoLayoutTitle,
   autoLayoutAriaLabel,
+  onArrange,
+  arrangeActive,
   isConnecting,
   isGroupMode,
   onGroupMode,
 }: ZoomControlsProps) {
+  const arrangeBtnRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [panelPos, setPanelPos] = useState({ left: 16, bottom: 20 });
   const [isDragging, setIsDragging] = useState(false);
@@ -310,6 +316,32 @@ export default function ZoomControls({
               title={layoutHint}
             >
               ⊞
+            </button>
+          )}
+
+          {onArrange && (
+            <button
+              ref={arrangeBtnRef}
+              type="button"
+              onClick={() => {
+                const rect = arrangeBtnRef.current?.getBoundingClientRect();
+                const anchor = rect
+                  ? { x: rect.left, y: rect.top }
+                  : { x: 16, y: window.innerHeight - 80 };
+                onArrange(anchor);
+              }}
+              style={{
+                ...btnStyle,
+                fontSize: 14,
+                background: arrangeActive ? "var(--primary-soft)" : "transparent",
+                color: arrangeActive ? "var(--primary)" : "var(--text-primary)",
+                border: arrangeActive ? "1px solid var(--primary)" : "none",
+                borderRadius: 6,
+              }}
+              aria-label="정렬해서 보기"
+              title="정렬해서 보기 — 격자·목록·종류별·컴팩트로 한 번에 정리"
+            >
+              ▦
             </button>
           )}
 

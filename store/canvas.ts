@@ -97,6 +97,14 @@ interface CanvasStore {
     boardId: string,
     module: Omit<Module, "id" | "createdAt" | "updatedAt">
   ): void;
+  /**
+   * 여러 모듈을 한 번의 상태 변경·undo 단위로 추가 (붙여넣기·드롭 묶음).
+   * 보드 카테고리 정책에 어긋나는 항목은 자동 제외하고, 추가된 모듈 id 배열을 반환합니다.
+   */
+  addModulesBatch(
+    boardId: string,
+    modules: Omit<Module, "id" | "createdAt" | "updatedAt">[]
+  ): string[];
   removeModule(boardId: string, moduleId: string): void;
   updateModule(
     boardId: string,
@@ -1648,6 +1656,41 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave?.();
     markDirty(boardId);
+  },
+
+  addModulesBatch(boardId, moduleInputs) {
+    const board = get().boards.find((b) => b.id === boardId);
+    if (!board) return [];
+
+    const allowed = moduleInputs.filter((mi) =>
+      isModuleTypeAllowedOnBoard(mi.type, board)
+    );
+    if (allowed.length === 0) return [];
+
+    get().pushHistory();
+    const now = getTimestamp();
+    const newIds: string[] = [];
+    const newModules: Module[] = allowed.map((mi) => {
+      const id = uuidv4();
+      newIds.push(id);
+      return { ...mi, id, createdAt: now, updatedAt: now };
+    });
+
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === boardId
+          ? {
+              ...b,
+              modules: [...b.modules, ...newModules],
+              updatedAt: getTimestamp(),
+            }
+          : b
+      ),
+    }));
+
+    debouncedSave?.();
+    markDirty(boardId);
+    return newIds;
   },
 
   removeModule(boardId, moduleId) {
