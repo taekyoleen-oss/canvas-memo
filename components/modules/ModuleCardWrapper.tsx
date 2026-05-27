@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from "react-dom";
 import type {
   Board,
+  BoardCategory,
   Module,
   MemoData,
   ScheduleData,
@@ -111,14 +112,32 @@ export default function ModuleCardWrapper({
 
   const moveBoardOptions = useMemo(() => {
     if (!board) return [];
-    const cat = normalizeBoardCategory(board);
-    return boardsForWorkspace(boards, cat)
-      .filter((b) => b.id !== boardId)
-      .filter((b) => isModuleTypeAllowedOnBoard(module.type, b))
-      .map((b) => ({
-        id: b.id,
-        label: `${b.icon ? `${b.icon} ` : ""}${(b.name ?? "").trim() || "제목 없음"}`.trim(),
-      }));
+    const order: BoardCategory[] = ["memo_schedule", "thinking", "topic_notes"];
+    const labelOf: Record<BoardCategory, string> = {
+      memo_schedule: "메모/할일",
+      thinking: "생각정리",
+      topic_notes: "주제별",
+    };
+    const list: Array<{
+      id: string;
+      label: string;
+      category: BoardCategory;
+      categoryLabel: string;
+      disabled: boolean;
+    }> = [];
+    for (const cat of order) {
+      for (const b of boardsForWorkspace(boards, cat)) {
+        if (b.id === boardId) continue;
+        list.push({
+          id: b.id,
+          label: `${b.icon ? `${b.icon} ` : ""}${(b.name ?? "").trim() || "제목 없음"}`.trim(),
+          category: cat,
+          categoryLabel: labelOf[cat],
+          disabled: !isModuleTypeAllowedOnBoard(module.type, b),
+        });
+      }
+    }
+    return list;
   }, [boards, board, boardId, module.type]);
 
   const brainstormCanvasLinks: BrainstormCanvasLinkSummary[] = useMemo(() => {

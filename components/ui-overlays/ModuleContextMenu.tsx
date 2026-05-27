@@ -2,6 +2,16 @@
 
 import { useEffect, useState } from "react";
 
+export type MoveBoardCategory = "memo_schedule" | "thinking" | "topic_notes";
+
+export interface MoveBoardOption {
+  id: string;
+  label: string;
+  category: MoveBoardCategory;
+  categoryLabel: string;
+  disabled: boolean;
+}
+
 interface ModuleContextMenuProps {
   isOpen: boolean;
   anchorRect?: DOMRect | null;
@@ -17,8 +27,8 @@ interface ModuleContextMenuProps {
   onToggleMinimize: () => void;
   isMinimized: boolean;
   onDelete: () => void;
-  /** 같은 카테고리(워크스페이스) 내 이동 가능한 보드 — 비어 있으면 영역 숨김 */
-  moveBoardOptions?: { id: string; label: string }[];
+  /** 세 카테고리(메모·일정 / 생각정리 / 주제별) 전체에서 이동 가능한 보드 */
+  moveBoardOptions?: MoveBoardOption[];
   onMoveToBoard?: (targetBoardId: string) => void;
 }
 
@@ -36,8 +46,8 @@ interface MenuItem {
 const MENU_WIDTH = 220;
 const MENU_ROW_BASE = 44;
 const MENU_ROW_TALL = 52;
-/** 콤보 + 라벨 + 이동 버튼 영역(대략) */
-const MOVE_BLOCK_HEIGHT = 100;
+/** 카테고리별 그룹 + 보드 리스트 영역(대략) */
+const MOVE_BLOCK_HEIGHT = 220;
 
 export default function ModuleContextMenu({
   isOpen,
@@ -58,7 +68,9 @@ export default function ModuleContextMenu({
   const [moveTargetId, setMoveTargetId] = useState("");
 
   const hasMoveBlock =
-    !!onMoveToBoard && Array.isArray(moveBoardOptions) && moveBoardOptions.length > 0;
+    !!onMoveToBoard &&
+    Array.isArray(moveBoardOptions) &&
+    moveBoardOptions.some((o) => !o.disabled);
 
   useEffect(() => {
     if (isOpen) setMoveTargetId("");
@@ -137,6 +149,16 @@ export default function ModuleContextMenu({
 
   const pos = calcMenuPos();
 
+  const groupedOptions = (() => {
+    const groups: MoveBoardCategory[] = ["memo_schedule", "thinking", "topic_notes"];
+    return groups
+      .map((cat) => {
+        const inCat = (moveBoardOptions ?? []).filter((o) => o.category === cat);
+        return { cat, inCat };
+      })
+      .filter((g) => g.inCat.length > 0);
+  })();
+
   const moveBlock =
     hasMoveBlock && onMoveToBoard ? (
       <div
@@ -149,36 +171,17 @@ export default function ModuleContextMenu({
           paddingBottom: 10,
         }}
       >
-        <p
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--text-muted)",
-            margin: "0 0 6px 0",
-          }}
-        >
-          다른 보드로 이동
-        </p>
-        <div className="flex items-stretch gap-2">
-          <select
-            className="min-w-0 flex-1 rounded-md bg-transparent"
+        <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+          <p
             style={{
-              fontSize: 14,
-              padding: "6px 8px",
-              border: "1px solid var(--border)",
-              color: "var(--text-primary)",
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--text-muted)",
+              margin: 0,
             }}
-            value={moveTargetId}
-            onChange={(e) => setMoveTargetId(e.target.value)}
-            aria-label="이동할 보드"
           >
-            <option value="">보드 선택…</option>
-            {moveBoardOptions!.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            다른 보드로 이동
+          </p>
           <button
             type="button"
             disabled={!moveTargetId}
@@ -186,10 +189,10 @@ export default function ModuleContextMenu({
               if (moveTargetId) onMoveToBoard(moveTargetId);
               onClose();
             }}
-            className="shrink-0 rounded-md px-3 font-medium"
+            className="rounded-md font-medium"
             style={{
-              minWidth: 52,
-              fontSize: 13,
+              padding: "4px 10px",
+              fontSize: 12,
               background: moveTargetId ? "var(--primary)" : "var(--surface-hover)",
               color: moveTargetId ? "var(--primary-fg)" : "var(--text-muted)",
               border: "1px solid var(--border)",
@@ -199,9 +202,59 @@ export default function ModuleContextMenu({
             이동
           </button>
         </div>
-        <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "6px 0 0 0" }}>
-          같은 탭(메모·일정 / 생각정리 / 주제별)의 다른 보드만
-        </p>
+        <div
+          style={{
+            maxHeight: 220,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          {groupedOptions.map(({ cat, inCat }) => (
+            <div key={cat} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--text-muted)",
+                  padding: "2px 4px",
+                }}
+              >
+                {inCat[0].categoryLabel}
+              </div>
+              {inCat.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  disabled={o.disabled}
+                  onClick={() => {
+                    if (o.disabled) return;
+                    setMoveTargetId(o.id);
+                  }}
+                  style={{
+                    textAlign: "left",
+                    padding: "7px 10px",
+                    borderRadius: 8,
+                    border:
+                      moveTargetId === o.id
+                        ? "1px solid var(--primary)"
+                        : "1px solid transparent",
+                    background:
+                      moveTargetId === o.id ? "var(--surface-hover)" : "transparent",
+                    cursor: o.disabled ? "not-allowed" : "pointer",
+                    color: o.disabled ? "var(--text-muted)" : "var(--text-primary)",
+                    opacity: o.disabled ? 0.55 : 1,
+                    fontSize: 13,
+                  }}
+                  title={o.disabled ? "이 보드는 해당 모듈 유형을 받을 수 없어요" : undefined}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     ) : null;
 
