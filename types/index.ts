@@ -155,8 +155,13 @@ export interface ScheduleItem {
 
 export interface ImageData {
   title: string;
+  /** 단일 이미지(레거시) — `srcs`가 있으면 무시. 신규 코드는 `srcs` 우선 사용 */
   src: string; // base64
+  /** 다중 이미지(신규). 비어 있으면 `src`로 fallback */
+  srcs?: string[];
   caption: string;
+  /** 메모 모듈처럼 자유로운 텍스트 입력(선택) */
+  description?: string;
 }
 
 export interface LinkData {

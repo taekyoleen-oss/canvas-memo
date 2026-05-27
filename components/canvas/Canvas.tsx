@@ -37,7 +37,10 @@ import GroupLayer from "./GroupLayer";
 import ZoomControls from "./ZoomControls";
 import ArrangeMenu from "./ArrangeMenu";
 import MapTemplateWorkspaceChrome from "./MapTemplateWorkspaceChrome";
+import MultiSelectActionBar from "./MultiSelectActionBar";
 import ModuleCardWrapper from "@/components/modules/ModuleCardWrapper";
+import { getImageSrcs } from "@/lib/imageData";
+import type { ModuleColor } from "@/types";
 
 interface CanvasProps {
   boardId: string;
@@ -697,6 +700,53 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     [board, boardId, viewport, onAddModule, updateModule]
   );
 
+  /** 여러 이미지 파일을 받아 단일 이미지 모듈에 모두 추가 */
+  const createImageModuleFromFiles = useCallback(
+    async (files: File[], canvasPos?: { x: number; y: number }) => {
+      if (!board || files.length === 0) return false;
+      const cat = normalizeBoardCategory(board);
+      if (!isModuleTypeAllowedOnCategory("image", cat)) {
+        setArrangeFlash("이 보드에는 이미지 모듈을 추가할 수 없어요");
+        return false;
+      }
+      const container = containerRef.current;
+      if (!container) return false;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      const pos =
+        canvasPos ?? screenToCanvas(cw / 2, ch / 2, viewport);
+
+      try {
+        const urls = await Promise.all(files.map(fileToDataUrl));
+        onAddModule("image", {
+          x: Math.round(pos.x - 130),
+          y: Math.round(pos.y - 90),
+        });
+        const latest = useCanvasStore
+          .getState()
+          .boards.find((b) => b.id === boardId);
+        const last = latest?.modules?.[latest.modules.length - 1];
+        if (last?.type === "image") {
+          updateModule(boardId, last.id, {
+            data: {
+              ...(last.data as ImageData),
+              src: urls[0],
+              srcs: urls.length > 1 ? urls : undefined,
+            },
+          });
+        }
+        setArrangeFlash(
+          `${files.length}개 이미지를 한 카드에 추가했어요`
+        );
+        return true;
+      } catch (err) {
+        console.warn("[MindCanvas] 다중 이미지 드롭 실패", err);
+        return false;
+      }
+    },
+    [board, boardId, viewport, onAddModule, updateModule]
+  );
+
   // ── 키보드 단축키 ────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -878,11 +928,16 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
       : undefined;
 
     if (dt.files && dt.files.length > 0) {
-      const imageFile = Array.from(dt.files).find((f) =>
+      const imageFiles = Array.from(dt.files).filter((f) =>
         f.type.startsWith("image/")
       );
-      if (imageFile) {
-        void createModuleFromPayload({ file: imageFile, canvasPos: pos });
+      if (imageFiles.length > 1) {
+        // 여러 이미지 → 하나의 이미지 모듈에 모두 누적
+        void createImageModuleFromFiles(imageFiles, pos);
+        return;
+      }
+      if (imageFiles.length === 1) {
+        void createModuleFromPayload({ file: imageFiles[0], canvasPos: pos });
         return;
       }
     }
@@ -996,6 +1051,117 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     multiDragOriginsRef.current.forEach((origin, id) => {
       updateModule(boardId, id, { position: { x: origin.x + dx, y: origin.y + dy } });
     });
+  }
+
+  // ── 다중 선택 일괄 동작 ────────────────────────────────────────
+  function handleMultiChangeColor(color: ModuleColor) {
+    if (selectedMultiIds.length === 0) return;
+    pushHistory();
+    selectedMultiIds.forEach((id) => updateModule(boardId, id, { color }));
+  }
+
+  function handleMultiDelete() {
+    if (selectedMultiIds.length === 0) return;
+    if (
+      !window.confirm(
+        `선택한 ${selectedMultiIds.length}개 모듈을 삭제하시겠습니까?`
+      )
+    )
+      return;
+    pushHistory();
+    selectedMultiIds.forEach((id) => removeModule(boardId, id));
+    setSelectedMultiIds([]);
+  }
+
+  /**
+   * 선택한 메모·이미지 모듈을 하나의 새 메모(노트)로 합칩니다.
+   * - 메모 content는 HTML 그대로 유지
+   * - 이미지 모듈은 각 이미지를 <img> 태그로 변환해 description과 함께 추가
+   * - 원본 모듈은 유지하며, 합쳐진 노트만 추가됨
+   */
+  function handleMergeSelectedToNote() {
+    if (!board) return;
+    const targets = selectedMultiIds
+      .map((id) => board.modules.find((m) => m.id === id))
+      .filter((m): m is Module => !!m)
+      .filter((m) => m.type === "memo" || m.type === "image");
+    if (targets.length < 2) return;
+
+    function escapeHtml(s: string): string {
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    const parts: string[] = [];
+    for (const m of targets) {
+      const title = (m.data as { title?: string }).title?.trim();
+      if (title) {
+        parts.push(`<h3>${escapeHtml(title)}</h3>`);
+      }
+      if (m.type === "memo") {
+        const content = (m.data as MemoData).content?.trim();
+        if (content) parts.push(content);
+      } else if (m.type === "image") {
+        const imgData = m.data as ImageData;
+        const srcs = getImageSrcs(imgData);
+        for (const src of srcs) {
+          parts.push(
+            `<p><img src="${src}" alt="${escapeHtml(
+              imgData.caption || title || "이미지"
+            )}" /></p>`
+          );
+        }
+        if (imgData.caption?.trim()) {
+          parts.push(
+            `<p><em>${escapeHtml(imgData.caption.trim())}</em></p>`
+          );
+        }
+        if (imgData.description?.trim()) {
+          parts.push(
+            `<p>${escapeHtml(imgData.description.trim()).replace(
+              /\n/g,
+              "<br/>"
+            )}</p>`
+          );
+        }
+      }
+    }
+    const mergedContent = parts.join("\n");
+
+    // 첫 번째 모듈 우측 옆에 배치
+    const first = targets[0];
+    const newPos = {
+      x: first.position.x + first.size.width + 40,
+      y: first.position.y,
+    };
+    const maxZ = board.modules.reduce(
+      (max, m) => Math.max(max, Number(m.zIndex) || 0),
+      0
+    );
+
+    pushHistory();
+    const ids = addModulesBatch(boardId, [
+      {
+        type: "memo",
+        position: newPos,
+        size: { width: 320, height: 280 },
+        zIndex: maxZ + 1,
+        color: first.color,
+        isExpanded: true,
+        data: {
+          title: "합친 노트",
+          content: mergedContent,
+          previewLines: 4,
+        },
+      },
+    ]);
+    if (ids.length > 0) {
+      setSelectedMultiIds([]);
+      setSelectedModuleId(ids[0]);
+      setArrangeFlash(`${targets.length}개 모듈을 노트로 합쳤어요`);
+    }
   }
 
   // ── 캔버스 빈 공간 클릭 ─────────────────────────────────────────
@@ -1545,6 +1711,23 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
           onClose={() => setArrangeMenuAnchor(null)}
         />
       )}
+
+      {/* 다중 선택 액션바 — 2개 이상 선택 시 캔버스 하단 중앙에 표시 */}
+      <MultiSelectActionBar
+        count={selectedMultiIds.length}
+        canMergeToNote={(() => {
+          if (!board) return false;
+          const mergeable = selectedMultiIds.filter((id) => {
+            const m = board.modules.find((mod) => mod.id === id);
+            return m?.type === "memo" || m?.type === "image";
+          });
+          return mergeable.length >= 2;
+        })()}
+        onMergeToNote={handleMergeSelectedToNote}
+        onChangeColor={handleMultiChangeColor}
+        onDelete={handleMultiDelete}
+        onClear={() => setSelectedMultiIds([])}
+      />
 
       {/* 드래그&드롭 오버레이 */}
       {isDragOver && (

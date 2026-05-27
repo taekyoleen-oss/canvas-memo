@@ -442,7 +442,7 @@ export default function Home() {
         : type === "brainstorm"
         ? { title: "브레인스토밍", items: [], previewCount: 4 }
         : type === "image"
-        ? { title: "이미지", src: "", caption: "" }
+        ? { title: "이미지", src: "", caption: "", description: "" }
         : type === "link"
         ? { url: "", title: "링크", description: "", favicon: "", thumbnail: "" }
         : type === "table"

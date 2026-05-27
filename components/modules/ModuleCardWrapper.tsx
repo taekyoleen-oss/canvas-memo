@@ -19,6 +19,8 @@ import { boardsForWorkspace, normalizeBoardCategory } from "@/lib/boardCategory"
 import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
+import { useModuleClipboardStore } from "@/store/moduleClipboard";
+import { getImageSrcs } from "@/lib/imageData";
 import { useLongPress } from "@/hooks/useLongPress";
 import ModuleCard from "./ModuleCard";
 import MemoModule from "./MemoModule";
@@ -53,8 +55,6 @@ interface ModuleCardWrapperProps {
   onMultiDragMove?: (dx: number, dy: number) => void;
   onShiftSelect?: (id: string) => void;
 }
-
-let _moduleClipboard: { type: Module["type"]; data: Module["data"] } | null = null;
 
 function getBestToAnchor(fromModule: Module, toModule: Module): AnchorSide {
   const fromCx = fromModule.position.x + fromModule.size.width / 2;
@@ -144,6 +144,9 @@ export default function ModuleCardWrapper({
   const startConnecting    = useConnectionStore((s) => s.startConnecting);
   const finishConnecting   = useConnectionStore((s) => s.finishConnecting);
 
+  const clipboardPayload = useModuleClipboardStore((s) => s.payload);
+  const copyToClipboard = useModuleClipboardStore((s) => s.copy);
+
   const [isDragging, setIsDragging] = useState(false);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -160,7 +163,6 @@ export default function ModuleCardWrapper({
   const [expandDirection, setExpandDirection] = useState<AnchorSide | null>(null);
   const [isFullViewOpen, setIsFullViewOpen] = useState(false);
   const [fullViewTitleEdit, setFullViewTitleEdit] = useState(false);
-  const [, forceUpdate] = useState(0);
 
   useEffect(() => {
     if (!isFullViewOpen) setFullViewTitleEdit(false);
@@ -428,23 +430,23 @@ export default function ModuleCardWrapper({
 
   /** 「내용만 복사」— 타입·data만 내부 클립보드에 저장 (붙여넣기용) */
   function handleCopy() {
-    _moduleClipboard = { type: module.type, data: JSON.parse(JSON.stringify(module.data)) };
-    forceUpdate((n) => n + 1);
+    copyToClipboard(module.type, module.data);
     setIsContextMenuOpen(false);
   }
 
   /** 「내용 붙여넣기」— 복사한 data로 같은 종류 새 모듈 (기본 크기) */
   function handlePaste() {
-    if (!_moduleClipboard) return;
+    const payload = useModuleClipboardStore.getState().payload;
+    if (!payload) return;
     const addModule = useCanvasStore.getState().addModule;
     addModule(boardId, {
-      type: _moduleClipboard.type,
+      type: payload.type,
       position: { x: module.position.x + 30, y: module.position.y + 30 },
       size: { width: 200, height: 100 },
       zIndex: Math.max(1, Number(module.zIndex ?? 0)) + 1,
       color: module.color,
       isExpanded: false,
-      data: JSON.parse(JSON.stringify(_moduleClipboard.data)),
+      data: JSON.parse(JSON.stringify(payload.data)),
     });
     setIsContextMenuOpen(false);
   }
@@ -615,9 +617,16 @@ export default function ModuleCardWrapper({
           headerTrailing={
             module.type === "image" ? (
               <ImageModuleHeaderPaste
-                onApplyDataUrl={(src) =>
-                  handleDataChange({ ...(module.data as ImageData), src })
-                }
+                onApplyDataUrl={(src) => {
+                  const cur = module.data as ImageData;
+                  const list = getImageSrcs(cur);
+                  const next = [...list, src];
+                  handleDataChange({
+                    ...cur,
+                    src: next[0],
+                    srcs: next.length > 1 ? next : undefined,
+                  });
+                }}
               />
             ) : undefined
           }
@@ -740,7 +749,7 @@ export default function ModuleCardWrapper({
             onDuplicateModule={handleDuplicateWholeModule}
             onCopyContent={handleCopy}
             onPasteContent={handlePaste}
-            hasPasteTarget={_moduleClipboard !== null}
+            hasPasteTarget={clipboardPayload !== null}
             onToggleMinimize={() => { setIsContextMenuOpen(false); handleToggleMinimize(); }}
             isMinimized={!!module.isMinimized}
             onDelete={() => { setIsContextMenuOpen(false); setIsDeleteDialogOpen(true); }}
@@ -878,17 +887,47 @@ export default function ModuleCardWrapper({
   );
 }
 
-// ── 이미지 전체화면 뷰어 ────────────────────────────────────────────────
+// ── 이미지 전체화면 뷰어 (캐러셀) ───────────────────────────────────────
 function ImageFullView({ module, onClose }: { module: Module; onClose: () => void }) {
   const d = module.data as ImageData;
+  const srcs = getImageSrcs(d);
   const [zoomed, setZoomed] = useState(false);
+  const [index, setIndex] = useState(0);
+
+  const clampedIndex = srcs.length === 0 ? 0 : Math.min(index, srcs.length - 1);
+  const current = srcs[clampedIndex];
+
+  const goPrev = useCallback(() => {
+    if (srcs.length === 0) return;
+    setZoomed(false);
+    setIndex((i) => (i - 1 + srcs.length) % srcs.length);
+  }, [srcs.length]);
+
+  const goNext = useCallback(() => {
+    if (srcs.length === 0) return;
+    setZoomed(false);
+    setIndex((i) => (i + 1) % srcs.length);
+  }, [srcs.length]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "ArrowRight") goNext();
+      else if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goPrev, goNext, onClose]);
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ zIndex: 200, background: "rgba(0,0,0,0.92)" }} onClick={onClose}>
       <div className="flex items-center justify-between px-4 flex-shrink-0" style={{ height: 52 }} onClick={(e) => e.stopPropagation()}>
-        <span className="font-medium text-sm truncate max-w-[70%]" style={{ color: "rgba(255,255,255,0.85)" }}>{d.title || d.caption || "이미지"}</span>
+        <span className="font-medium text-sm truncate max-w-[60%]" style={{ color: "rgba(255,255,255,0.85)" }}>
+          {d.title || d.caption || "이미지"}
+          {srcs.length > 1 ? ` · ${clampedIndex + 1} / ${srcs.length}` : ""}
+        </span>
         <div className="flex items-center gap-2">
-          {d.src && (
+          {current && (
             <button onClick={() => setZoomed((v) => !v)} style={{ background: "rgba(255,255,255,0.12)", border: "none", borderRadius: 6, cursor: "pointer", color: "#fff", fontSize: 12, padding: "5px 10px" }} title={zoomed ? "축소" : "확대"}>
               {zoomed ? "축소 ▼" : "확대 ▲"}
             </button>
@@ -896,16 +935,56 @@ function ImageFullView({ module, onClose }: { module: Module; onClose: () => voi
           <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", border: "none", borderRadius: 6, cursor: "pointer", color: "#fff", fontSize: 18, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center" }} aria-label="닫기">✕</button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto flex items-center justify-center" style={{ touchAction: "pinch-zoom" }} onClick={(e) => { e.stopPropagation(); setZoomed((v) => !v); }}>
-        {d.src ? (
+      <div className="relative flex-1 overflow-auto flex items-center justify-center" style={{ touchAction: "pinch-zoom" }} onClick={(e) => { e.stopPropagation(); setZoomed((v) => !v); }}>
+        {current ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={d.src} alt={d.caption || d.title} style={{ maxWidth: zoomed ? "none" : "100%", maxHeight: zoomed ? "none" : "100%", width: zoomed ? "auto" : undefined, objectFit: "contain", transition: "max-width 200ms, max-height 200ms", cursor: zoomed ? "zoom-out" : "zoom-in", userSelect: "none" }} draggable={false} />
+          <img src={current} alt={d.caption || d.title} style={{ maxWidth: zoomed ? "none" : "100%", maxHeight: zoomed ? "none" : "100%", width: zoomed ? "auto" : undefined, objectFit: "contain", transition: "max-width 200ms, max-height 200ms", cursor: zoomed ? "zoom-out" : "zoom-in", userSelect: "none" }} draggable={false} />
         ) : (
           <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 14 }}>이미지 없음</span>
         )}
+        {srcs.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); goPrev(); }}
+              aria-label="이전 이미지"
+              style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(0,0,0,0.55)", color: "#fff", border: "none", cursor: "pointer", fontSize: 20 }}
+            >‹</button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); goNext(); }}
+              aria-label="다음 이미지"
+              style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(0,0,0,0.55)", color: "#fff", border: "none", cursor: "pointer", fontSize: 20 }}
+            >›</button>
+          </>
+        )}
       </div>
+      {srcs.length > 1 && (
+        <div
+          className="flex-shrink-0 flex items-center justify-center gap-1.5 py-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {srcs.map((_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { setZoomed(false); setIndex(i); }}
+              aria-label={`이미지 ${i + 1}로 이동`}
+              style={{
+                width: i === clampedIndex ? 18 : 8,
+                height: 8,
+                borderRadius: 4,
+                background: i === clampedIndex ? "#fff" : "rgba(255,255,255,0.35)",
+                border: "none",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            />
+          ))}
+        </div>
+      )}
       {d.caption && (
-        <div className="flex-shrink-0 text-center py-3 px-4" style={{ color: "rgba(255,255,255,0.6)", fontSize: 13 }} onClick={(e) => e.stopPropagation()}>{d.caption}</div>
+        <div className="flex-shrink-0 text-center py-2 px-4" style={{ color: "rgba(255,255,255,0.6)", fontSize: 13 }} onClick={(e) => e.stopPropagation()}>{d.caption}</div>
       )}
     </div>
   );
@@ -969,16 +1048,38 @@ function FullViewContent({ module, onChange }: { module: Module; onChange: (data
     }
     case "image": {
       const d = module.data as ImageData;
+      const list = getImageSrcs(d);
       return (
         <div className="flex flex-col gap-3">
-          {d.src ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={d.src} alt={d.caption || d.title} className="w-full rounded-lg object-contain" style={{ maxHeight: 400 }} />
+          {list.length > 0 ? (
+            <div
+              className="grid gap-2"
+              style={{
+                gridTemplateColumns: list.length === 1 ? "1fr" : "1fr 1fr",
+              }}
+            >
+              {list.map((src, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={i}
+                  src={src}
+                  alt={d.caption || d.title || `이미지 ${i + 1}`}
+                  className="w-full rounded-lg object-contain"
+                  style={{ maxHeight: list.length === 1 ? 400 : 240, background: "var(--surface-hover)" }}
+                />
+              ))}
+            </div>
           ) : (
             <p className="text-sm" style={{ color: "var(--text-muted)" }}>이미지 없음</p>
           )}
           <input type="text" value={d.caption} onChange={(e) => onChange({ ...d, caption: e.target.value })} placeholder="캡션 입력..."
             style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+          <textarea
+            value={d.description ?? ""}
+            onChange={(e) => onChange({ ...d, description: e.target.value })}
+            placeholder="간단한 메모 (선택)"
+            style={{ width: "100%", minHeight: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text-primary)", fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", lineHeight: 1.55 }}
+          />
         </div>
       );
     }

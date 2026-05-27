@@ -54,8 +54,13 @@ export default function ArrangeMenu({
       Math.max(margin, anchorBottomLeft.x),
       Math.max(margin, winW - w - margin)
     );
+    // 앵커가 화면 상단 절반에 있으면 아래로, 하단 절반에 있으면 위로 열기
+    const openDown = anchorBottomLeft.y < winH / 2;
+    const desiredTop = openDown
+      ? anchorBottomLeft.y + 4
+      : anchorBottomLeft.y - h - 8;
     const top = Math.min(
-      Math.max(margin, anchorBottomLeft.y - h - 8),
+      Math.max(margin, desiredTop),
       Math.max(margin, winH - h - margin)
     );
     el.style.left = `${left}px`;

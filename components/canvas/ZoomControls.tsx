@@ -45,29 +45,29 @@ export default function ZoomControls({
 }: ZoomControlsProps) {
   const arrangeBtnRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const [panelPos, setPanelPos] = useState({ left: 16, bottom: 20 });
+  const [panelPos, setPanelPos] = useState({ left: 12, top: 64 });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
     startY: number;
     origLeft: number;
-    origBottom: number;
+    origTop: number;
   } | null>(null);
 
-  const clampPanelPos = useCallback((left: number, bottom: number) => {
+  const clampPanelPos = useCallback((left: number, top: number) => {
     const margin = 8;
     const el = rootRef.current;
     if (!el || typeof window === "undefined") {
-      return { left, bottom };
+      return { left, top };
     }
     const w = el.offsetWidth || 120;
-    const h = el.offsetHeight || 80;
+    const h = el.offsetHeight || 60;
     const maxLeft = Math.max(margin, window.innerWidth - w - margin);
-    const maxBottom = Math.max(margin, window.innerHeight - h - margin);
+    const maxTop = Math.max(margin, window.innerHeight - h - margin);
     return {
       left: Math.min(maxLeft, Math.max(margin, left)),
-      bottom: Math.min(maxBottom, Math.max(margin, bottom)),
+      top: Math.min(maxTop, Math.max(margin, top)),
     };
   }, []);
 
@@ -80,12 +80,12 @@ export default function ZoomControls({
         startX: e.clientX,
         startY: e.clientY,
         origLeft: panelPos.left,
-        origBottom: panelPos.bottom,
+        origTop: panelPos.top,
       };
       setIsDragging(true);
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [panelPos.left, panelPos.bottom]
+    [panelPos.left, panelPos.top]
   );
 
   const onDragPointerMove = useCallback(
@@ -95,7 +95,7 @@ export default function ZoomControls({
       const dx = e.clientX - d.startX;
       const dy = e.clientY - d.startY;
       setPanelPos(
-        clampPanelPos(d.origLeft + dx, d.origBottom - dy)
+        clampPanelPos(d.origLeft + dx, d.origTop + dy)
       );
     },
     [clampPanelPos]
@@ -115,7 +115,7 @@ export default function ZoomControls({
 
   useEffect(() => {
     function onResize() {
-      setPanelPos((p) => clampPanelPos(p.left, p.bottom));
+      setPanelPos((p) => clampPanelPos(p.left, p.top));
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -140,9 +140,8 @@ export default function ZoomControls({
   };
 
   const fitRowBtn: React.CSSProperties = {
-    width: "100%",
     minHeight: 26,
-    padding: "4px 6px",
+    padding: "0 8px",
     borderRadius: 6,
     border: "1px solid var(--border)",
     background: "var(--surface-hover)",
@@ -152,6 +151,8 @@ export default function ZoomControls({
     cursor: "pointer",
     textAlign: "center",
     transition: "background 0.12s",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   };
 
   const layoutHint =
@@ -166,112 +167,86 @@ export default function ZoomControls({
       data-zoom-controls="true"
       style={{
         position: "absolute",
-        bottom: panelPos.bottom,
+        top: panelPos.top,
         left: panelPos.left,
         width: "max-content",
         maxWidth: "calc(100vw - 32px)",
         display: "flex",
-        flexDirection: "row",
-        alignItems: "stretch",
-        gap: 0,
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 6,
         zIndex: 80,
         touchAction: "none",
       }}
     >
-      <div
-        onPointerDown={onDragPointerDown}
-        onPointerMove={onDragPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={() => {
-          dragRef.current = null;
-          setIsDragging(false);
-        }}
-        style={{
-          width: 22,
-          minWidth: 22,
-          flexShrink: 0,
-          borderRadius: "8px 0 0 8px",
-          background: "var(--surface-hover)",
-          border: "1px solid var(--border-strong)",
-          borderRight: "1px dashed var(--border)",
-          cursor: isDragging ? "grabbing" : "grab",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 6,
-          padding: "8px 0",
-          userSelect: "none",
-          color: "var(--text-muted)",
-          fontWeight: 600,
-        }}
-        title="드래그하여 줌 패널 위치 이동"
-        aria-label="줌 패널 위치 이동"
-      >
-        <span aria-hidden style={{ fontSize: 14, lineHeight: 1 }}>
-          ⋮
-        </span>
-        <span
-          style={{
-            writingMode: "vertical-rl",
-            textOrientation: "upright",
-            fontSize: 10,
-            letterSpacing: "0.12em",
-          }}
-        >
-          이동
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-start",
-          gap: 6,
-          minWidth: 0,
-        }}
-      >
-        {isConnecting && (
-          <div
-            style={{
-              background: "var(--primary)",
-              color: "var(--primary-fg)",
-              borderRadius: "0 8px 8px 0",
-              padding: "6px 12px",
-              fontSize: 12,
-              fontWeight: 600,
-              boxShadow: "var(--shadow-md)",
-              whiteSpace: "nowrap",
-              animation: "connectPulse 1.4s ease-in-out infinite",
-            }}
-          >
-            🔗 연결 모드 — 대상 모듈을 클릭하세요 &nbsp;·&nbsp; ESC 취소
-          </div>
-        )}
-
+      {isConnecting && (
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            background: "var(--surface-elevated)",
-            border: "1px solid var(--border)",
-            borderRadius: "0 8px 8px 8px",
-            borderLeft: "none",
-            padding: "2px 3px 3px",
+            background: "var(--primary)",
+            color: "var(--primary-fg)",
+            borderRadius: 8,
+            padding: "6px 12px",
+            fontSize: 12,
+            fontWeight: 600,
             boxShadow: "var(--shadow-md)",
-            boxSizing: "border-box",
+            whiteSpace: "nowrap",
+            animation: "connectPulse 1.4s ease-in-out infinite",
           }}
         >
+          🔗 연결 모드 — 대상 모듈을 클릭하세요 &nbsp;·&nbsp; ESC 취소
+        </div>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+          background: "var(--surface-elevated)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          boxShadow: "var(--shadow-md)",
+          boxSizing: "border-box",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          onPointerDown={onDragPointerDown}
+          onPointerMove={onDragPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onLostPointerCapture={() => {
+            dragRef.current = null;
+            setIsDragging(false);
+          }}
+          style={{
+            width: 22,
+            minWidth: 22,
+            flexShrink: 0,
+            background: "var(--surface-hover)",
+            borderRight: "1px dashed var(--border)",
+            cursor: isDragging ? "grabbing" : "grab",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            userSelect: "none",
+            color: "var(--text-muted)",
+            fontWeight: 600,
+            fontSize: 14,
+          }}
+          title="드래그하여 줌 패널 위치 이동"
+          aria-label="줌 패널 위치 이동"
+        >
+          ⋮⋮
+        </div>
+
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            flexWrap: "wrap",
-            gap: 4,
-            rowGap: 6,
+            flexWrap: "nowrap",
+            gap: 2,
+            padding: "3px 4px",
           }}
         >
           <button onClick={onZoomOut} style={btnStyle} aria-label="축소" title="축소">
@@ -301,7 +276,27 @@ export default function ZoomControls({
           <div
             style={{
               width: 1,
-              height: 16,
+              height: 18,
+              background: "var(--border)",
+              marginInline: 2,
+              flexShrink: 0,
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={onFitToView}
+            style={fitRowBtn}
+            aria-label="Fit to View"
+            title="Fit to View — 지금 화면에 보이는 모듈에 맞게 줌·팬"
+          >
+            Fit
+          </button>
+
+          <div
+            style={{
+              width: 1,
+              height: 18,
               background: "var(--border)",
               marginInline: 2,
               flexShrink: 0,
@@ -326,8 +321,8 @@ export default function ZoomControls({
               onClick={() => {
                 const rect = arrangeBtnRef.current?.getBoundingClientRect();
                 const anchor = rect
-                  ? { x: rect.left, y: rect.top }
-                  : { x: 16, y: window.innerHeight - 80 };
+                  ? { x: rect.left, y: rect.bottom + 4 }
+                  : { x: 16, y: 80 };
                 onArrange(anchor);
               }}
               style={{
@@ -361,17 +356,6 @@ export default function ZoomControls({
           >
             📦
           </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={onFitToView}
-          style={fitRowBtn}
-          aria-label="Fit to View"
-          title="Fit to View — 지금 화면에 보이는 모듈에 맞게 줌·팬 (없으면 전체와 동일)"
-        >
-          Fit to View
-        </button>
         </div>
       </div>
 
