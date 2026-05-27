@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Toast from "@/components/ui-overlays/Toast";
+import PwaInstallHint from "@/components/ui-overlays/PwaInstallHint";
 import { useCanvasStore } from "@/store/canvas";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
@@ -857,6 +858,8 @@ export default function Home() {
           onDismiss={() => setToastMessage(null)}
         />
       ) : null}
+
+      <PwaInstallHint />
     </>
   );
 }
