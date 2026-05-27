@@ -113,8 +113,16 @@ interface CanvasStore {
   ): void;
   duplicateModule(boardId: string, moduleId: string): void;
   /**
-   * 같은 워크스페이스(카테고리) 내 다른 보드로 모듈을 옮깁니다.
-   * 대상 보드에서 허용되지 않는 모듈 타입이면 `false`입니다.
+   * Web Share Target 으로 들어온 모듈 배치 — 받은 메모(인박스) 보드의 기존 모듈을
+   * 아래로 일괄 시프트하고 최신을 맨 위(y=72)부터 세로 GAP=28 간격으로 추가한다.
+   */
+  addSharedModulesToInbox(
+    inboxBoardId: string,
+    modules: Omit<Module, "id" | "createdAt" | "updatedAt">[]
+  ): string[];
+  /**
+   * 다른 보드로 모듈을 옮깁니다. 세 카테고리(메모/일정·생각정리·주제별) 어디로든 가능하나,
+   * 대상 보드에서 허용되지 않는 모듈 타입(예: 일반 보드에 brainstorm)은 `false`입니다.
    */
   moveModuleToBoard(
     sourceBoardId: string,
@@ -1693,6 +1701,66 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     return newIds;
   },
 
+  addSharedModulesToInbox(inboxBoardId, moduleInputs) {
+    const board = get().boards.find((b) => b.id === inboxBoardId);
+    if (!board) return [];
+
+    const allowed = moduleInputs.filter((mi) =>
+      isModuleTypeAllowedOnBoard(mi.type, board)
+    );
+    if (allowed.length === 0) return [];
+
+    get().pushHistory();
+    const now = getTimestamp();
+    const GAP = 28;
+    const CARD_H_GUESS = 200;
+    const STEP = CARD_H_GUESS + GAP;
+    const newCount = allowed.length;
+    const totalShift = STEP * newCount;
+
+    const maxZBefore = board.modules.reduce(
+      (a, m) => Math.max(a, Number(m.zIndex) || 0),
+      0
+    );
+
+    const newIds: string[] = [];
+    const newModules: Module[] = allowed.map((mi, idx) => {
+      const id = uuidv4();
+      newIds.push(id);
+      return {
+        ...mi,
+        id,
+        createdAt: now,
+        updatedAt: now,
+        position: { x: 48, y: 72 + idx * STEP },
+        zIndex: maxZBefore + 1 + idx,
+      };
+    });
+
+    set((state) => ({
+      boards: state.boards.map((b) =>
+        b.id === inboxBoardId
+          ? {
+              ...b,
+              modules: [
+                ...newModules,
+                ...b.modules.map((m) => ({
+                  ...m,
+                  position: { x: m.position.x, y: m.position.y + totalShift },
+                  updatedAt: now,
+                })),
+              ],
+              updatedAt: now,
+            }
+          : b
+      ),
+    }));
+
+    debouncedSave?.();
+    markDirty(inboxBoardId);
+    return newIds;
+  },
+
   removeModule(boardId, moduleId) {
     get().pushHistory();
     set((state) => ({
@@ -1791,9 +1859,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     const sourceBoard = st.boards.find((b) => b.id === sourceBoardId);
     const targetBoard = st.boards.find((b) => b.id === targetBoardId);
     if (!sourceBoard || !targetBoard) return false;
-    if (normalizeBoardCategory(sourceBoard) !== normalizeBoardCategory(targetBoard)) {
-      return false;
-    }
     const mod = sourceBoard.modules.find((m) => m.id === moduleId);
     if (!mod) return false;
     if (!isModuleTypeAllowedOnBoard(mod.type, targetBoard)) return false;
