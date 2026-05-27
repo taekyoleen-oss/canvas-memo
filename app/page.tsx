@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Toast from "@/components/ui-overlays/Toast";
 import { useCanvasStore } from "@/store/canvas";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/store/auth";
@@ -257,6 +258,9 @@ export default function Home() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
   const exitConfirmedRef = useRef(false);
+  const searchParams = useSearchParams();
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const shareQueryHandledRef = useRef(false);
 
   // auth 초기화 (1회)
   useEffect(() => {
@@ -332,6 +336,41 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(id);
   }, [authLoading, appReady, user, router]);
+
+  // 공유 등록 후 리다이렉트로 들어온 쿼리 처리 (board / toast / rejectedTooLarge)
+  useEffect(() => {
+    if (!appReady) return;
+    if (shareQueryHandledRef.current) return;
+    if (!searchParams) return;
+
+    const boardParam = searchParams.get("board");
+    const toastParam = searchParams.get("toast");
+    const countParam = searchParams.get("count");
+    const tooLargeParam = searchParams.get("rejectedTooLarge");
+
+    if (!boardParam && !toastParam && !tooLargeParam) return;
+
+    shareQueryHandledRef.current = true;
+
+    if (boardParam && boards.some((b) => b.id === boardParam)) {
+      setActiveBoard(boardParam);
+    }
+    if (toastParam === "share-ok") {
+      const count = Number(countParam) || 0;
+      const tooLarge = Number(tooLargeParam) || 0;
+      const msg =
+        tooLarge > 0
+          ? `📥 ${count}개 항목이 받은 메모로 들어왔어요 (용량 초과 ${tooLarge}건은 제외)`
+          : `📥 ${count}개 항목이 받은 메모로 들어왔어요`;
+      setToastMessage(msg);
+    } else if (tooLargeParam) {
+      setToastMessage(
+        `용량 초과로 ${tooLargeParam}건이 추가되지 않았어요 (8MB 제한)`
+      );
+    }
+
+    router.replace("/", { scroll: false });
+  }, [appReady, searchParams, boards, setActiveBoard, router]);
 
   // Ctrl+K: 검색 열기
   useEffect(() => {
@@ -809,6 +848,13 @@ export default function Home() {
           setAddBoardState({ open: true, category })
         }
       />
+
+      {toastMessage ? (
+        <Toast
+          message={toastMessage}
+          onDismiss={() => setToastMessage(null)}
+        />
+      ) : null}
     </>
   );
 }
