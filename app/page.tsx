@@ -627,6 +627,8 @@ export default function Home() {
         <TopHeader
           boardName={activeBoard?.name ?? "보드"}
           workspaceLabel={workspaceLabel}
+          isInbox={!!activeBoard?.isInbox}
+          inboxItemCount={activeBoard?.modules.length ?? 0}
           onAddModule={() =>
             handleAddModule(
               activeBoardCategory === "thinking" ? "brainstorm" : "memo"

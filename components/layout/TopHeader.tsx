@@ -7,6 +7,10 @@ interface TopHeaderProps {
   boardName: string;
   /** 현재 상단 탭(워크스페이스) — 모바일에서 카테고리 인지용 */
   workspaceLabel?: string;
+  /** 받은 메모(인박스) 보드인지 — 표시할 칩이 달라짐 */
+  isInbox?: boolean;
+  /** 받은 메모 보드일 때 카드 수 */
+  inboxItemCount?: number;
   onAddModule: () => void;
   onMenuClick: () => void;
 }
@@ -14,6 +18,8 @@ interface TopHeaderProps {
 export default function TopHeader({
   boardName,
   workspaceLabel,
+  isInbox,
+  inboxItemCount,
   onAddModule,
   onMenuClick,
 }: TopHeaderProps) {
@@ -29,7 +35,7 @@ export default function TopHeader({
       }}
     >
       {/* 좌측 */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <button
           onClick={onMenuClick}
           className="flex items-center justify-center rounded-lg"
@@ -61,6 +67,21 @@ export default function TopHeader({
           >
             {boardName}
           </span>
+          {isInbox ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+              style={{
+                background: "var(--surface-hover)",
+                color: "var(--text-secondary)",
+                fontSize: 11,
+                width: "fit-content",
+                marginTop: 2,
+              }}
+              title="안드로이드 공유에서 들어오는 항목이 여기로 모입니다"
+            >
+              📥 공유로 들어온 항목 · {inboxItemCount ?? 0}개
+            </span>
+          ) : null}
         </div>
       </div>
 
