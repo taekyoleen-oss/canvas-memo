@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
 import { useCanvasStore } from "@/store/canvas";
 import { ensureInboxBoard } from "@/lib/inboxBoard";
@@ -41,7 +41,6 @@ async function enrichLinkMetadata(modules: SharedModuleInput[]): Promise<SharedM
 
 export default function ShareTargetPage() {
   const router = useRouter();
-  const params = useSearchParams();
   const { user, loading: authLoading } = useAuthStore();
   const addSharedModulesToInbox = useCanvasStore((s) => s.addSharedModulesToInbox);
   const processingRef = useRef(false);
@@ -99,10 +98,6 @@ export default function ShareTargetPage() {
       window.setTimeout(() => router.replace("/"), 1500);
     });
   }, [authLoading, user, router, addSharedModulesToInbox]);
-
-  useEffect(() => {
-    void params;
-  }, [params]);
 
   return (
     <div

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Toast from "@/components/ui-overlays/Toast";
 import PwaInstallHint from "@/components/ui-overlays/PwaInstallHint";
 import { useCanvasStore } from "@/store/canvas";
@@ -259,7 +259,6 @@ export default function Home() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
   const exitConfirmedRef = useRef(false);
-  const searchParams = useSearchParams();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const shareQueryHandledRef = useRef(false);
 
@@ -339,15 +338,18 @@ export default function Home() {
   }, [authLoading, appReady, user, router]);
 
   // 공유 등록 후 리다이렉트로 들어온 쿼리 처리 (board / toast / rejectedTooLarge)
+  // useSearchParams는 prerender bailout을 유발해 build를 막으므로
+  // window.location.search 를 직접 읽는다.
   useEffect(() => {
     if (!appReady) return;
     if (shareQueryHandledRef.current) return;
-    if (!searchParams) return;
+    if (typeof window === "undefined") return;
 
-    const boardParam = searchParams.get("board");
-    const toastParam = searchParams.get("toast");
-    const countParam = searchParams.get("count");
-    const tooLargeParam = searchParams.get("rejectedTooLarge");
+    const sp = new URLSearchParams(window.location.search);
+    const boardParam = sp.get("board");
+    const toastParam = sp.get("toast");
+    const countParam = sp.get("count");
+    const tooLargeParam = sp.get("rejectedTooLarge");
 
     if (!boardParam && !toastParam && !tooLargeParam) return;
 
@@ -371,7 +373,7 @@ export default function Home() {
     }
 
     router.replace("/", { scroll: false });
-  }, [appReady, searchParams, boards, setActiveBoard, router]);
+  }, [appReady, boards, setActiveBoard, router]);
 
   // Ctrl+K: 검색 열기
   useEffect(() => {
