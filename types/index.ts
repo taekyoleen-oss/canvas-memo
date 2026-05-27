@@ -226,3 +226,21 @@ export interface Group {
   /** 누적 스케일(표시용), 기본 1 */
   mapScale?: number;
 }
+
+/**
+ * Web Share Target POST 로 들어왔지만 아직 보드의 Module로 변환되지 않은 단건.
+ * 서비스워커가 IndexedDB에 push 하고, /share-target 페이지가 drain 하여 처리한다.
+ */
+export interface PendingShareItem {
+  id: string;              // uuid (서비스워커가 발급)
+  kind: "text" | "url" | "image" | "file";
+  text?: string;
+  url?: string;
+  title?: string;
+  fileName?: string;
+  fileType?: string;       // MIME
+  fileSize?: number;       // bytes
+  dataUrl?: string;        // base64 data URL — 8MB 미만일 때만
+  rejectedReason?: "too_large" | "unsupported";
+  receivedAt: string;      // ISO timestamp
+}
