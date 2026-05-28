@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/auth";
-import { useCanvasStore } from "@/store/canvas";
 import { ensureInboxBoard } from "@/lib/inboxBoard";
 import { drainPendingShareItems } from "@/lib/share/pendingShareStore";
+import { persistSharedModulesToInbox } from "@/lib/share/persistSharedModules";
 import {
   classifyShare,
   type SharedModuleInput,
@@ -42,7 +42,6 @@ async function enrichLinkMetadata(modules: SharedModuleInput[]): Promise<SharedM
 export default function ShareTargetPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuthStore();
-  const addSharedModulesToInbox = useCanvasStore((s) => s.addSharedModulesToInbox);
   const processingRef = useRef(false);
   const [message, setMessage] = useState("공유 항목을 정리 중이에요…");
 
@@ -74,11 +73,13 @@ export default function ShareTargetPage() {
       const { accepted, rejected } = classifyShare(items);
       const enriched = await enrichLinkMetadata(accepted);
 
-      let count = 0;
-      if (enriched.length > 0) {
-        const ids = addSharedModulesToInbox(inboxId, enriched);
-        count = ids.length;
-      }
+      // 핵심: zustand 스토어가 hydrate 되어 있지 않으므로 Supabase 에 직접 쓴다.
+      // 홈으로 리다이렉트되면 page.tsx 가 hydrateFromSupabase 로 새 모듈을 보여준다.
+      const { insertedCount } = await persistSharedModulesToInbox(
+        user.id,
+        inboxId,
+        enriched
+      );
 
       const tooLarge = rejected.filter(
         (r: PendingShareItem) => r.rejectedReason === "too_large"
@@ -86,9 +87,9 @@ export default function ShareTargetPage() {
 
       const search = new URLSearchParams();
       search.set("board", inboxId);
-      if (count > 0) {
+      if (insertedCount > 0) {
         search.set("toast", "share-ok");
-        search.set("count", String(count));
+        search.set("count", String(insertedCount));
       }
       if (tooLarge > 0) search.set("rejectedTooLarge", String(tooLarge));
       router.replace(`/?${search.toString()}`);
@@ -97,7 +98,7 @@ export default function ShareTargetPage() {
       setMessage("공유 처리 중 오류가 났어요. 홈으로 이동합니다.");
       window.setTimeout(() => router.replace("/"), 1500);
     });
-  }, [authLoading, user, router, addSharedModulesToInbox]);
+  }, [authLoading, user, router]);
 
   return (
     <div

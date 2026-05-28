@@ -2,7 +2,7 @@
  * Buffers POST /share-target into IndexedDB and redirects to /share-target?ok=1.
  * Bumping SW_VERSION forces clients to update.
  */
-const SW_VERSION = "share-target-v1";
+const SW_VERSION = "share-target-v2";
 const MAX_BYTES = 8 * 1024 * 1024;
 const DB_NAME = "mindcanvas-share";
 const DB_VERSION = 1;
