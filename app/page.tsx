@@ -261,6 +261,15 @@ export default function Home() {
   const exitConfirmedRef = useRef(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const shareQueryHandledRef = useRef(false);
+  // popstate(뒤로가기) 핸들러가 항상 최신 오버레이 상태를 참조하도록 ref 로 미러링.
+  // useEffect deps 에 모두 넣으면 더미 history.pushState 가 반복돼 백 스택이 오염됨.
+  const overlayStateRef = useRef({
+    showExitConfirm: false,
+    addBoardOpen: false,
+    mapTemplateOpen: false,
+    showSearch: false,
+    showMobileDrawer: false,
+  });
 
   // 로그인: 원격에 보드가 있으면 Supabase → repair → 로컬은 탭/마지막 보드만 병합(보드 그래프 덮어쓰기 방지)
   useEffect(() => {
@@ -382,20 +391,85 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // 뒤로가기(Back) 버튼 → 항상 앱 종료 확인 다이얼로그 표시
+  // overlayStateRef 동기화 — popstate 핸들러가 최신 상태를 보도록 함
+  useEffect(() => {
+    overlayStateRef.current = {
+      showExitConfirm,
+      addBoardOpen: addBoardState.open,
+      mapTemplateOpen: mapTemplateDialogOpen,
+      showSearch,
+      showMobileDrawer,
+    };
+  }, [
+    showExitConfirm,
+    addBoardState.open,
+    mapTemplateDialogOpen,
+    showSearch,
+    showMobileDrawer,
+  ]);
+
+  // 뒤로가기(Back) 버튼 → 열려 있는 오버레이/전체보기를 먼저 닫고, 다 닫혔을 때만 종료 확인.
   useEffect(() => {
     // App Router 초기화와 겹치지 않도록 더미 히스토리는 다음 틱에 쌓음 (HMR 안정화)
     const initId = window.setTimeout(() => {
       window.history.pushState({ appGuard: true }, "");
     }, 0);
 
+    /**
+     * 활성 보드에서 펼쳐진(isExpanded) 모듈을 모두 접는다.
+     * @returns 접은 모듈이 1개 이상이면 true
+     */
+    function collapseExpandedModules(): boolean {
+      const { boards: allBoards, activeBoardId, updateModule } =
+        useCanvasStore.getState();
+      const board = allBoards.find((b) => b.id === activeBoardId);
+      if (!board) return false;
+      const expanded = board.modules.filter((m) => m.isExpanded);
+      if (expanded.length === 0) return false;
+      for (const m of expanded) {
+        updateModule(board.id, m.id, { isExpanded: false });
+      }
+      return true;
+    }
+
     function handlePopState() {
       if (exitConfirmedRef.current) {
         // 종료가 승인된 상태이므로 이후의 라우팅/종료 처리를 방해하지 않음
         return;
       }
-      // 다시 더미 상태를 쌓아 다음 뒤로가기도 가로챔
+
+      // 다음 뒤로가기도 가로채도록 더미 state 를 다시 쌓음
       window.history.pushState({ appGuard: true }, "");
+
+      const s = overlayStateRef.current;
+
+      // 우선순위 stack: 상단 오버레이부터 닫는다.
+      if (s.showExitConfirm) {
+        setShowExitConfirm(false);
+        return;
+      }
+      if (s.addBoardOpen) {
+        setAddBoardState((prev) => ({ ...prev, open: false }));
+        return;
+      }
+      if (s.mapTemplateOpen) {
+        setMapTemplateDialogOpen(false);
+        return;
+      }
+      if (s.showSearch) {
+        setShowSearch(false);
+        return;
+      }
+      if (s.showMobileDrawer) {
+        setShowMobileDrawer(false);
+        return;
+      }
+      // 전체보기(펼쳐진 카드)가 있으면 모두 접기
+      if (collapseExpandedModules()) {
+        return;
+      }
+
+      // 닫을 오버레이가 없으면 종료 확인 표시
       setShowExitConfirm(true);
     }
 
