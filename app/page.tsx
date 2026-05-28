@@ -248,7 +248,7 @@ export default function Home() {
     applyMapTemplate,
     markHydrated,
   } = useCanvasStore();
-  const { user, loading: authLoading, init: initAuth } = useAuthStore();
+  const { user, loading: authLoading } = useAuthStore();
   const [addBoardState, setAddBoardState] = useState<{
     open: boolean;
     category: BoardCategory;
@@ -261,11 +261,6 @@ export default function Home() {
   const exitConfirmedRef = useRef(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const shareQueryHandledRef = useRef(false);
-
-  // auth 초기화 (1회)
-  useEffect(() => {
-    initAuth();
-  }, [initAuth]);
 
   // 로그인: 원격에 보드가 있으면 Supabase → repair → 로컬은 탭/마지막 보드만 병합(보드 그래프 덮어쓰기 방지)
   useEffect(() => {

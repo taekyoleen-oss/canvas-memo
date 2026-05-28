@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
+import AuthInitializer from "@/components/providers/AuthInitializer";
 import ServiceWorkerRegister from "@/components/ui-overlays/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko" suppressHydrationWarning>
       <body>
         <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
+          <AuthInitializer />
           {children}
         </ThemeProvider>
         <ServiceWorkerRegister />
