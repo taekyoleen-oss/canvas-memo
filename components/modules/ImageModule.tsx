@@ -37,9 +37,11 @@ export default function ImageModule({
   );
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
+    // FileList는 input에 묶인 라이브 참조 → value를 비우면 비어버린다.
+    // 먼저 배열로 복사한 뒤 input을 초기화한다(같은 파일 재선택 허용).
+    const files = e.target.files ? Array.from(e.target.files) : [];
     e.target.value = "";
-    if (!files || files.length === 0) return;
+    if (files.length === 0) return;
     void applyFiles(files);
   }
 
@@ -104,6 +106,30 @@ export default function ImageModule({
                 +{remaining}
               </span>
             )}
+            {/* 접힌 상태에서도 이미지 추가 가능 */}
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInputRef.current?.click();
+              }}
+              className="absolute bottom-1 left-1 flex items-center justify-center rounded-full"
+              style={{
+                width: 26,
+                height: 26,
+                background: "rgba(0,0,0,0.55)",
+                color: "#fff",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 17,
+                lineHeight: 1,
+              }}
+              title="이미지 추가 (여러 장 가능)"
+              aria-label="이미지 추가"
+            >
+              ＋
+            </button>
           </div>
         ) : (
           <button
