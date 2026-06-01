@@ -1135,20 +1135,42 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     );
     if (comprehensiveRemote.changed) boards = comprehensiveRemote.boards;
 
-    // 현재 선택된 보드를 유지 (없으면 첫 번째 보드)
+    // 현재 선택된 보드를 유지. 없으면 워크스페이스 우선순위(현재 탭 → 메모→생각→주제)로 선택.
+    // boards[0] 는 created_at 최오래 보드(주제별 기본 보드)라, 이를 기본값으로 쓰면
+    // 새로고침 시 자동으로 주제별 탭으로 튀는 문제가 있어 hydrateForUser 와 동일한 규칙을 쓴다.
     const currentActiveBoardId = get().activeBoardId;
-    const restoredId =
-      (currentActiveBoardId && boards.find((b) => b.id === currentActiveBoardId))
+    const prevBy = get().lastOpenedBoardByCategory;
+
+    let restoredId: string | null =
+      currentActiveBoardId && boards.some((b) => b.id === currentActiveBoardId)
         ? currentActiveBoardId
-        : boards[0]?.id ?? null;
+        : null;
+    let ws: BoardCategory = restoredId
+      ? normalizeBoardCategory(boards.find((b) => b.id === restoredId)!)
+      : get().activeWorkspace;
+
+    if (!restoredId) {
+      const order: BoardCategory[] = [
+        ws,
+        "memo_schedule",
+        "thinking",
+        "topic_notes",
+      ];
+      for (const w of order) {
+        const id = pickBoardInWorkspace(boards, w, prevBy[w]);
+        if (id) {
+          restoredId = id;
+          ws = w;
+          break;
+        }
+      }
+      if (!restoredId) restoredId = boards[0]?.id ?? null;
+    }
 
     const restoredBoard = restoredId
       ? boards.find((b) => b.id === restoredId)
       : undefined;
-    const ws = restoredBoard
-      ? normalizeBoardCategory(restoredBoard)
-      : get().activeWorkspace;
-    const prevBy = get().lastOpenedBoardByCategory;
+    if (restoredBoard) ws = normalizeBoardCategory(restoredBoard);
     const lastOpenedBoardByCategory: Partial<Record<BoardCategory, string>> = {
       ...prevBy,
       ...(restoredId && restoredBoard
