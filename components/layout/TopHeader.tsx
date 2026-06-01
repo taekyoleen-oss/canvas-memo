@@ -13,6 +13,8 @@ interface TopHeaderProps {
   inboxItemCount?: number;
   onAddModule: () => void;
   onMenuClick: () => void;
+  /** API 사용량 패널 열기 */
+  onOpenCosts?: () => void;
 }
 
 export default function TopHeader({
@@ -22,6 +24,7 @@ export default function TopHeader({
   inboxItemCount,
   onAddModule,
   onMenuClick,
+  onOpenCosts,
 }: TopHeaderProps) {
   const { user, signOut } = useAuthStore();
   return (
@@ -87,6 +90,24 @@ export default function TopHeader({
 
       {/* 우측 */}
       <div className="flex items-center gap-1">
+        {onOpenCosts ? (
+          <button
+            onClick={onOpenCosts}
+            className="flex items-center justify-center rounded-lg"
+            style={{
+              width: 44,
+              height: 44,
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 18,
+            }}
+            title="API 사용량"
+            aria-label="API 사용량 보기"
+          >
+            💲
+          </button>
+        ) : null}
         <ThemeToggle />
         {user ? (
           <button

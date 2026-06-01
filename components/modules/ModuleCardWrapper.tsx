@@ -21,7 +21,9 @@ import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
 import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { useModuleClipboardStore } from "@/store/moduleClipboard";
-import { getImageSrcs } from "@/lib/imageData";
+import { getImageSrcs, appendImageSrcs } from "@/lib/imageData";
+import ImageModuleHeaderCopy from "./ImageModuleHeaderCopy";
+import { useImageClipboardStore } from "@/store/imageClipboard";
 import { useLongPress } from "@/hooks/useLongPress";
 import ModuleCard from "./ModuleCard";
 import MemoModule from "./MemoModule";
@@ -55,6 +57,11 @@ interface ModuleCardWrapperProps {
   onMultiDragStart?: () => void;
   onMultiDragMove?: (dx: number, dy: number) => void;
   onShiftSelect?: (id: string) => void;
+  /** 순서 지정 합치기 모드 활성 — 카드 클릭이 일반 선택 대신 순서 지정 */
+  mergeOrderActive?: boolean;
+  /** 이 모듈의 합치기 순서(1부터). 미지정이면 아직 안 고름 */
+  mergeOrderIndex?: number;
+  onMergeOrderPick?: (id: string) => void;
 }
 
 function getBestToAnchor(fromModule: Module, toModule: Module): AnchorSide {
@@ -98,6 +105,9 @@ export default function ModuleCardWrapper({
   onMultiDragStart,
   onMultiDragMove,
   onShiftSelect,
+  mergeOrderActive = false,
+  mergeOrderIndex,
+  onMergeOrderPick,
 }: ModuleCardWrapperProps) {
   const updateModule = useCanvasStore((s) => s.updateModule);
   const removeModule = useCanvasStore((s) => s.removeModule);
@@ -165,6 +175,7 @@ export default function ModuleCardWrapper({
 
   const clipboardPayload = useModuleClipboardStore((s) => s.payload);
   const copyToClipboard = useModuleClipboardStore((s) => s.copy);
+  const imageClipSrcs = useImageClipboardStore((s) => s.srcs);
 
   const [isDragging, setIsDragging] = useState(false);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
@@ -264,6 +275,8 @@ export default function ModuleCardWrapper({
   // ── 드래그 이동 ─────────────────────────────────────────────────────────
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      // 순서 지정 합치기 모드: 드래그 금지, 클릭(탭)으로만 순서 지정
+      if (mergeOrderActive) return;
       const target = e.target as HTMLElement;
       if (
         target.tagName === "BUTTON" || target.tagName === "INPUT" ||
@@ -287,7 +300,7 @@ export default function ModuleCardWrapper({
       };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [module.position]
+    [module.position, mergeOrderActive]
   );
 
   const handlePointerMove = useCallback(
@@ -489,6 +502,12 @@ export default function ModuleCardWrapper({
 
   function handleClick(e: React.MouseEvent) {
     if (didDragRef.current) { didDragRef.current = false; return; }
+    // 순서 지정 합치기 모드: 어떤 클릭이든 순서 지정으로 처리
+    if (mergeOrderActive && onMergeOrderPick) {
+      e.stopPropagation();
+      onMergeOrderPick(module.id);
+      return;
+    }
     const target = e.target as HTMLElement;
     if (
       target.tagName === "BUTTON" || target.tagName === "INPUT" ||
@@ -580,8 +599,12 @@ export default function ModuleCardWrapper({
           transition: (isDragging || isResizing) ? "none" : "transform 0.15s ease",
           cursor: isConnectTarget ? "crosshair" : isDragging ? "grabbing" : "grab",
           touchAction: "none",
-          outline: isMultiSelected ? "2px solid rgb(59,130,246)" : undefined,
-          borderRadius: isMultiSelected ? 14 : undefined,
+          outline: mergeOrderIndex
+            ? "2px solid var(--primary)"
+            : isMultiSelected
+            ? "2px solid rgb(59,130,246)"
+            : undefined,
+          borderRadius: mergeOrderIndex || isMultiSelected ? 14 : undefined,
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -592,6 +615,30 @@ export default function ModuleCardWrapper({
         onClick={handleClick}
         {...longPress}
       >
+        {mergeOrderIndex ? (
+          <div
+            style={{
+              position: "absolute",
+              top: -10,
+              left: -10,
+              zIndex: 40,
+              width: 24,
+              height: 24,
+              borderRadius: "50%",
+              background: "var(--primary)",
+              color: "var(--primary-fg)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 13,
+              fontWeight: 700,
+              boxShadow: "var(--shadow-md)",
+              pointerEvents: "none",
+            }}
+          >
+            {mergeOrderIndex}
+          </div>
+        ) : null}
         {isConnectTarget && (
           <div style={{ position: "absolute", inset: -4, borderRadius: 16, border: "2px dashed var(--primary)", pointerEvents: "none", zIndex: 30, opacity: 0.7, animation: "connectTarget 0.7s ease-in-out infinite alternate" }} />
         )}
@@ -635,18 +682,48 @@ export default function ModuleCardWrapper({
           titleInputPlaceholder={isTopicNoteMemo ? "노트 제목" : undefined}
           headerTrailing={
             module.type === "image" ? (
-              <ImageModuleHeaderPaste
-                onApplyDataUrl={(src) => {
-                  const cur = module.data as ImageData;
-                  const list = getImageSrcs(cur);
-                  const next = [...list, src];
-                  handleDataChange({
-                    ...cur,
-                    src: next[0],
-                    srcs: next.length > 1 ? next : undefined,
-                  });
-                }}
-              />
+              <span className="flex items-center gap-1">
+                <ImageModuleHeaderCopy
+                  srcs={getImageSrcs(module.data as ImageData)}
+                />
+                {imageClipSrcs.length > 0 ? (
+                  <button
+                    type="button"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDataChange(
+                        appendImageSrcs(module.data as ImageData, imageClipSrcs)
+                      );
+                    }}
+                    className="flex-shrink-0 rounded px-1.5 font-medium"
+                    style={{
+                      height: 26,
+                      fontSize: 10,
+                      background: "var(--surface-hover)",
+                      border: "1px solid var(--border)",
+                      color: "var(--text-primary)",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                    title="복사한 이미지를 이 모듈에 추가"
+                  >
+                    복사한 이미지
+                  </button>
+                ) : null}
+                <ImageModuleHeaderPaste
+                  onApplyDataUrl={(src) => {
+                    const cur = module.data as ImageData;
+                    const list = getImageSrcs(cur);
+                    const next = [...list, src];
+                    handleDataChange({
+                      ...cur,
+                      src: next[0],
+                      srcs: next.length > 1 ? next : undefined,
+                    });
+                  }}
+                />
+              </span>
             ) : undefined
           }
           topicNoteHeaderActions={isTopicNoteMemo}

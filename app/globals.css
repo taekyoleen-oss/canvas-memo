@@ -29,6 +29,8 @@
   --module-purple: #F3E8FF;
   --module-orange: #FFEDD5;
   --module-teal: #CCFBF1;
+  --cost-anthropic: #C2703D;
+  --cost-openai: #10A37F;
 }
 
 /* 다크 테마 */
@@ -60,6 +62,8 @@
   --module-purple: #2A1040;
   --module-orange: #3D1A00;
   --module-teal: #003D33;
+  --cost-anthropic: #E08D5A;
+  --cost-openai: #1FC9A0;
 }
 
 @theme inline {

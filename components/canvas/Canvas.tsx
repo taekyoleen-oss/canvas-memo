@@ -38,6 +38,7 @@ import ZoomControls from "./ZoomControls";
 import ArrangeMenu from "./ArrangeMenu";
 import MapTemplateWorkspaceChrome from "./MapTemplateWorkspaceChrome";
 import MultiSelectActionBar from "./MultiSelectActionBar";
+import MergeOrderBar from "./MergeOrderBar";
 import ModuleCardWrapper from "@/components/modules/ModuleCardWrapper";
 import { getImageSrcs } from "@/lib/imageData";
 import type { ModuleColor } from "@/types";
@@ -314,6 +315,9 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
 
   // ── 다중 선택 ────────────────────────────────────────────────
   const [selectedMultiIds, setSelectedMultiIds] = useState<string[]>([]);
+  // ── 순서 지정 합치기 ──────────────────────────────────────────
+  const [mergeOrderMode, setMergeOrderMode] = useState(false);
+  const [mergeOrderIds, setMergeOrderIds] = useState<string[]>([]);
   // 렌더링용 state + stale closure 방지용 ref 병행 사용
   const [selectionLasso, setSelectionLasso] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const selectionLassoRef = useRef<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -758,6 +762,11 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
           (active as HTMLElement).isContentEditable);
 
       if (e.key === "Escape") {
+        if (mergeOrderMode) {
+          setMergeOrderMode(false);
+          setMergeOrderIds([]);
+          return;
+        }
         cancelConnecting();
         setSelectedModuleId(null);
         setLassoMode(false);
@@ -827,6 +836,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     undo,
     copySelectedModules,
     pasteClipboardModules,
+    mergeOrderMode,
   ]);
 
   // ── 외부 클립보드 붙여넣기 (이미지·URL·텍스트) ─────────────────
@@ -1079,9 +1089,9 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
    * - 이미지 모듈은 각 이미지를 <img> 태그로 변환해 description과 함께 추가
    * - 원본 모듈은 유지하며, 합쳐진 노트만 추가됨
    */
-  function handleMergeSelectedToNote() {
+  function mergeIdsToNote(orderedIds: string[]) {
     if (!board) return;
-    const targets = selectedMultiIds
+    const targets = orderedIds
       .map((id) => board.modules.find((m) => m.id === id))
       .filter((m): m is Module => !!m)
       .filter((m) => m.type === "memo" || m.type === "image");
@@ -1162,6 +1172,35 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
       setSelectedModuleId(ids[0]);
       setArrangeFlash(`${targets.length}개 모듈을 노트로 합쳤어요`);
     }
+  }
+
+  // ── 순서 지정 합치기 ──────────────────────────────────────────
+  function startMergeOrder() {
+    setSelectedMultiIds([]);
+    setSelectedModuleId(null);
+    setMergeOrderIds([]);
+    setMergeOrderMode(true);
+    setArrangeFlash("합칠 모듈을 순서대로 탭하세요");
+  }
+  function cancelMergeOrder() {
+    setMergeOrderMode(false);
+    setMergeOrderIds([]);
+  }
+  function pickMergeOrder(id: string) {
+    const m = board?.modules.find((x) => x.id === id);
+    if (!m || (m.type !== "memo" && m.type !== "image")) {
+      setArrangeFlash("메모·이미지 모듈만 합칠 수 있어요");
+      return;
+    }
+    setMergeOrderIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+  function executeMergeOrder() {
+    if (mergeOrderIds.length < 2) return;
+    mergeIdsToNote([...mergeOrderIds]);
+    setMergeOrderMode(false);
+    setMergeOrderIds([]);
   }
 
   // ── 캔버스 빈 공간 클릭 ─────────────────────────────────────────
@@ -1675,6 +1714,12 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
               onMultiDragStart={selectedMultiIds.includes(module.id) ? handleMultiDragStart : undefined}
               onMultiDragMove={selectedMultiIds.includes(module.id) ? handleMultiDragMove : undefined}
               onShiftSelect={handleShiftSelect}
+              mergeOrderActive={mergeOrderMode}
+              mergeOrderIndex={(() => {
+                const i = mergeOrderIds.indexOf(module.id);
+                return i >= 0 ? i + 1 : undefined;
+              })()}
+              onMergeOrderPick={pickMergeOrder}
             />
           ))}
       </div>
@@ -1712,22 +1757,31 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         />
       )}
 
-      {/* 다중 선택 액션바 — 2개 이상 선택 시 캔버스 하단 중앙에 표시 */}
-      <MultiSelectActionBar
-        count={selectedMultiIds.length}
-        canMergeToNote={(() => {
-          if (!board) return false;
-          const mergeable = selectedMultiIds.filter((id) => {
-            const m = board.modules.find((mod) => mod.id === id);
-            return m?.type === "memo" || m?.type === "image";
-          });
-          return mergeable.length >= 2;
-        })()}
-        onMergeToNote={handleMergeSelectedToNote}
-        onChangeColor={handleMultiChangeColor}
-        onDelete={handleMultiDelete}
-        onClear={() => setSelectedMultiIds([])}
+      {/* 순서 지정 합치기 — 캔버스 상단 중앙 */}
+      <MergeOrderBar
+        mode={mergeOrderMode ? "ordering" : "idle"}
+        mergeableCount={
+          board
+            ? board.modules.filter(
+                (m) => m.type === "memo" || m.type === "image"
+              ).length
+            : 0
+        }
+        pickedCount={mergeOrderIds.length}
+        onStart={startMergeOrder}
+        onExecute={executeMergeOrder}
+        onCancel={cancelMergeOrder}
       />
+
+      {/* 다중 선택 액션바 — 2개 이상 선택 시 캔버스 하단 중앙에 표시 */}
+      {!mergeOrderMode && (
+        <MultiSelectActionBar
+          count={selectedMultiIds.length}
+          onChangeColor={handleMultiChangeColor}
+          onDelete={handleMultiDelete}
+          onClear={() => setSelectedMultiIds([])}
+        />
+      )}
 
       {/* 드래그&드롭 오버레이 */}
       {isDragOver && (

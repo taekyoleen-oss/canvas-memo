@@ -21,6 +21,7 @@ import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
 import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 import MapTemplateDialog from "@/components/canvas/MapTemplateDialog";
 import { defaultMapTemplateOrigin } from "@/lib/canvas/mapTemplatePlacement";
+import CostPanel from "@/components/costs/CostPanel";
 
 interface AddBoardDialogProps {
   isOpen: boolean;
@@ -255,6 +256,7 @@ export default function Home() {
   }>({ open: false, category: "memo_schedule" });
   const [showMobileDrawer, setShowMobileDrawer] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showCostPanel, setShowCostPanel] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [mapTemplateDialogOpen, setMapTemplateDialogOpen] = useState(false);
@@ -269,6 +271,7 @@ export default function Home() {
     mapTemplateOpen: false,
     showSearch: false,
     showMobileDrawer: false,
+    showCostPanel: false,
   });
 
   // 로그인: 원격에 보드가 있으면 Supabase → repair → 로컬은 탭/마지막 보드만 병합(보드 그래프 덮어쓰기 방지)
@@ -399,6 +402,7 @@ export default function Home() {
       mapTemplateOpen: mapTemplateDialogOpen,
       showSearch,
       showMobileDrawer,
+      showCostPanel,
     };
   }, [
     showExitConfirm,
@@ -406,6 +410,7 @@ export default function Home() {
     mapTemplateDialogOpen,
     showSearch,
     showMobileDrawer,
+    showCostPanel,
   ]);
 
   // 뒤로가기(Back) 버튼 → 열려 있는 오버레이/전체보기를 먼저 닫고, 다 닫혔을 때만 종료 확인.
@@ -446,6 +451,10 @@ export default function Home() {
       // 우선순위 stack: 상단 오버레이부터 닫는다.
       if (s.showExitConfirm) {
         setShowExitConfirm(false);
+        return;
+      }
+      if (s.showCostPanel) {
+        setShowCostPanel(false);
         return;
       }
       if (s.addBoardOpen) {
@@ -707,6 +716,7 @@ export default function Home() {
             )
           }
           onMenuClick={() => setShowMobileDrawer(true)}
+          onOpenCosts={() => setShowCostPanel(true)}
         />
         <div
           className="flex min-w-0 flex-shrink-0 flex-col border-b"
@@ -772,7 +782,28 @@ export default function Home() {
               borderBottom: "1px solid var(--border)",
             }}
           >
-            <WorkspaceSwitcher />
+            <div className="flex w-full items-stretch" style={{ background: "var(--surface)" }}>
+              <div className="min-w-0 flex-1">
+                <WorkspaceSwitcher />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCostPanel(true)}
+                className="flex flex-shrink-0 items-center justify-center"
+                style={{
+                  width: 48,
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: "1px solid var(--border)",
+                  cursor: "pointer",
+                  fontSize: 18,
+                }}
+                title="API 사용량"
+                aria-label="API 사용량 보기"
+              >
+                💲
+              </button>
+            </div>
             {activeBoardId ? (
               <ModuleToolbar
                 boardCategory={activeBoardCategory}
@@ -931,6 +962,12 @@ export default function Home() {
       ) : null}
 
       <PwaInstallHint />
+
+      {/* API 사용량 패널 */}
+      <CostPanel
+        isOpen={showCostPanel}
+        onClose={() => setShowCostPanel(false)}
+      />
     </>
   );
 }

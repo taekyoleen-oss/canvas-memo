@@ -6,9 +6,6 @@ import ColorPalette from "@/components/ui-overlays/ColorPalette";
 
 interface MultiSelectActionBarProps {
   count: number;
-  /** 메모/이미지처럼 노트로 합칠 수 있는 모듈이 2개 이상일 때만 활성화 */
-  canMergeToNote: boolean;
-  onMergeToNote: () => void;
   onChangeColor: (color: ModuleColor) => void;
   onDelete: () => void;
   onClear: () => void;
@@ -16,8 +13,6 @@ interface MultiSelectActionBarProps {
 
 export default function MultiSelectActionBar({
   count,
-  canMergeToNote,
-  onMergeToNote,
   onChangeColor,
   onDelete,
   onClear,
@@ -106,26 +101,6 @@ export default function MultiSelectActionBar({
           {count}개 선택
         </span>
         <div style={{ width: 1, height: 20, background: "var(--border)" }} />
-
-        <button
-          type="button"
-          onClick={onMergeToNote}
-          disabled={!canMergeToNote}
-          style={{
-            ...btnStyle,
-            opacity: canMergeToNote ? 1 : 0.45,
-            cursor: canMergeToNote ? "pointer" : "not-allowed",
-            background: canMergeToNote ? "var(--primary-soft)" : "transparent",
-            color: canMergeToNote ? "var(--primary)" : "var(--text-muted)",
-          }}
-          title={
-            canMergeToNote
-              ? "메모·이미지를 하나의 노트로 합치기 (원본 유지)"
-              : "메모 또는 이미지 모듈을 2개 이상 선택해야 합니다"
-          }
-        >
-          📝 노트로 합치기
-        </button>
 
         <button
           type="button"
