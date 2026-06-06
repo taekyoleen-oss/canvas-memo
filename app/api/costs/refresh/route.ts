@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { missingCostEnv } from "@/lib/supabase/admin";
 import { syncCosts } from "@/lib/costSync";
@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // 패널 "새로고침" — 로그인 사용자가 직접 동기화 실행.
-export async function POST() {
+// 선택 body { days } 로 백필 기간 지정(기본 30일, 최대 366일).
+export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -28,9 +29,20 @@ export async function POST() {
     );
   }
 
+  // 기간 파싱: 기본 30, 1~366일로 제한.
+  let days = 30;
   try {
-    const out = await syncCosts();
-    return NextResponse.json(out);
+    const body = (await req.json()) as { days?: number };
+    if (body && Number.isFinite(Number(body.days))) {
+      days = Math.min(366, Math.max(1, Math.floor(Number(body.days))));
+    }
+  } catch {
+    // body 없음 → 기본 30일
+  }
+
+  try {
+    const out = await syncCosts(days);
+    return NextResponse.json({ ...out, days });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(

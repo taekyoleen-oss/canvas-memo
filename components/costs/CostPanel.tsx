@@ -202,6 +202,7 @@ export default function CostPanel({
   const [data, setData] = useState<CostData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -230,17 +231,29 @@ export default function CostPanel({
     if (isOpen) void load();
   }, [isOpen, load]);
 
-  async function handleRefresh() {
+  // days: 백필 기간(공급사에서 가져올 최근 일수). 기본 30.
+  async function runSync(days = 30) {
     setRefreshing(true);
     setError(null);
+    setNotice(null);
     try {
-      const res = await fetch("/api/costs/refresh", { method: "POST" });
+      const res = await fetch("/api/costs/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ days }),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `동기화 실패 (${res.status})`);
-      const failed = Object.entries(json?.results ?? {})
+      const results = (json?.results ?? {}) as Record<string, string>;
+      const failed = Object.entries(results)
         .filter(([, v]) => typeof v === "string" && v.startsWith("error"))
         .map(([k, v]) => `${k}: ${v}`);
+      const ok = Object.entries(results)
+        .filter(([, v]) => typeof v === "string" && v.startsWith("ok"))
+        .map(([k, v]) => `${k === "anthropic" ? "Claude" : k === "openai" ? "OpenAI" : k} ${v}`);
       if (failed.length) setError(failed.join(" · "));
+      if (ok.length)
+        setNotice(`최근 ${json?.days ?? days}일 동기화 완료 · ${ok.join(" · ")}`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "동기화 중 오류");
@@ -248,6 +261,8 @@ export default function CostPanel({
       setRefreshing(false);
     }
   }
+
+  const handleRefresh = () => runSync(30);
 
   async function saveBudget(provider: "anthropic" | "openai", limit: number) {
     const res = await fetch("/api/costs/budget", {
@@ -349,6 +364,19 @@ export default function CostPanel({
             </div>
           ) : null}
 
+          {notice && !error ? (
+            <div
+              className="mb-4 rounded-lg px-3 py-2 text-sm"
+              style={{
+                background: "var(--surface-hover)",
+                border: "1px solid var(--cost-openai)",
+                color: "var(--cost-openai)",
+              }}
+            >
+              {notice}
+            </div>
+          ) : null}
+
           {loading && !data ? (
             <div className="py-12 text-center text-sm" style={{ color: "var(--text-muted)" }}>
               불러오는 중…
@@ -375,9 +403,41 @@ export default function CostPanel({
                 <DailyBars series={data?.series ?? []} />
               </div>
 
+              {/* 기간 백필 — 과거 사용액 끌어오기 */}
+              <div className="mt-5">
+                <div className="mb-2 text-xs font-medium" style={{ color: "var(--text-secondary)" }}>
+                  과거 사용액 가져오기 (백필)
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {[30, 90, 180].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => runSync(d)}
+                      disabled={refreshing}
+                      className="rounded-lg px-3 text-xs font-medium"
+                      style={{
+                        height: 34,
+                        background: "var(--surface-hover)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text-secondary)",
+                        cursor: refreshing ? "wait" : "pointer",
+                      }}
+                    >
+                      최근 {d}일
+                    </button>
+                  ))}
+                  {refreshing ? (
+                    <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                      동기화 중…
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
               <p className="mt-5 text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
                 API는 사용액만 제공합니다. &quot;남은 금액&quot;은 설정한 월 예산에서 이번 달 사용액을 뺀 값입니다.
-                데이터가 비어 보이면 새로고침(↻)을 눌러 동기화하세요.
+                ↻ 또는 위 백필 버튼으로 동기화하세요. 표시 금액은 공급사 Admin API가 보고하는 조직(Organization) 단위 사용액입니다.
               </p>
             </>
           )}
