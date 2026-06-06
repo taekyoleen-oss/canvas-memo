@@ -13,6 +13,9 @@ interface ModuleToolbarProps {
   boardCategory?: BoardCategory;
   /** 생각정리: 맵 템플릿 다이얼로그 — 모듈 버튼 줄 맨 앞에 배치 */
   onMapTemplates?: () => void;
+  /** 순서 지정 합치기 시작 — 검색 옆 버튼 (합칠 수 있는 모듈이 2개 이상일 때만 표시) */
+  onStartMerge?: () => void;
+  canMerge?: boolean;
   /** inline: 워크스페이스 스위처와 같은 줄 — 하단 테두리 없음, 가로 스크롤 */
   variant?: "default" | "inline";
 }
@@ -22,6 +25,8 @@ export default function ModuleToolbar({
   onSearch,
   boardCategory = "memo_schedule",
   onMapTemplates,
+  onStartMerge,
+  canMerge = false,
   variant = "default",
 }: ModuleToolbarProps) {
   const isThinking = boardCategory === "thinking";
@@ -152,6 +157,29 @@ export default function ModuleToolbar({
           flexShrink: 0,
         }}
       />
+
+      {onStartMerge && canMerge ? (
+        <button
+          type="button"
+          onClick={onStartMerge}
+          className="flex items-center gap-1.5 rounded-lg px-3"
+          style={{
+            height: 34,
+            background: "var(--primary-soft)",
+            border: "1px solid var(--primary)",
+            cursor: "pointer",
+            fontSize: 13,
+            color: "var(--primary)",
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+          title="모듈을 순서대로 탭해서 하나의 노트로 합치기"
+        >
+          <span style={{ fontSize: 15 }}>📝</span>
+          <span className="hidden sm:inline">순서대로 합치기</span>
+        </button>
+      ) : null}
 
       <button
         onClick={onSearch}

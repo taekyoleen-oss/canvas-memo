@@ -257,6 +257,7 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
   const setFocusGroup = useCanvasStore((s) => s.setFocusGroup);
   const focusModuleId = useCanvasStore((s) => s.focusModuleId);
   const setFocusModule = useCanvasStore((s) => s.setFocusModule);
+  const mergeOrderRequestId = useCanvasStore((s) => s.mergeOrderRequestId);
   const undo = useCanvasStore((s) => s.undo);
   const pushHistory = useCanvasStore((s) => s.pushHistory);
   const pendingGroupInvite = useCanvasStore((s) => s.pendingGroupInvite);
@@ -495,6 +496,12 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
     updateViewport(boardId, vp);
     setFocusModule(null);
   }, [focusModuleId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 툴바의 "순서대로 합치기" 시작 요청 처리 ──────────────────────
+  useEffect(() => {
+    if (mergeOrderRequestId === 0) return;
+    startMergeOrder();
+  }, [mergeOrderRequestId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 다중 모듈 복사/붙여넣기 콜백 ─────────────────────────────────
   /** 현재 선택된 모듈(단일+다중)을 클립보드에 저장. 화면 좌상단 기준 상대 좌표로 보관 */
@@ -1757,21 +1764,14 @@ export default function Canvas({ boardId, onAddModule }: CanvasProps) {
         />
       )}
 
-      {/* 순서 지정 합치기 — 캔버스 상단 중앙 */}
-      <MergeOrderBar
-        mode={mergeOrderMode ? "ordering" : "idle"}
-        mergeableCount={
-          board
-            ? board.modules.filter(
-                (m) => m.type === "memo" || m.type === "image"
-              ).length
-            : 0
-        }
-        pickedCount={mergeOrderIds.length}
-        onStart={startMergeOrder}
-        onExecute={executeMergeOrder}
-        onCancel={cancelMergeOrder}
-      />
+      {/* 순서 지정 합치기 — 시작은 툴바 버튼, 진행 중 컨트롤만 캔버스 상단 중앙 */}
+      {mergeOrderMode && (
+        <MergeOrderBar
+          pickedCount={mergeOrderIds.length}
+          onExecute={executeMergeOrder}
+          onCancel={cancelMergeOrder}
+        />
+      )}
 
       {/* 다중 선택 액션바 — 2개 이상 선택 시 캔버스 하단 중앙에 표시 */}
       {!mergeOrderMode && (

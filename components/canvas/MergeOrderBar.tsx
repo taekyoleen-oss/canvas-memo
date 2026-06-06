@@ -1,27 +1,19 @@
 "use client";
 
-// 캔버스 상단 중앙 "순서 지정 합치기" 컨트롤.
-// idle: 합칠 수 있는(메모/이미지) 모듈이 2개 이상이면 시작 버튼 표시.
+// 캔버스 상단 중앙 "순서 지정 합치기" 진행 컨트롤.
+// 시작 버튼은 툴바(검색 옆)로 이동했고, 이 컴포넌트는 순서 지정 진행 중에만 표시된다.
 // ordering: 모듈을 순서대로 탭 → "합치기 실행".
 interface MergeOrderBarProps {
-  mode: "idle" | "ordering";
-  mergeableCount: number;
   pickedCount: number;
-  onStart: () => void;
   onExecute: () => void;
   onCancel: () => void;
 }
 
 export default function MergeOrderBar({
-  mode,
-  mergeableCount,
   pickedCount,
-  onStart,
   onExecute,
   onCancel,
 }: MergeOrderBarProps) {
-  if (mode === "idle" && mergeableCount < 2) return null;
-
   const wrap: React.CSSProperties = {
     position: "absolute",
     top: 12,
@@ -53,29 +45,6 @@ export default function MergeOrderBar({
     borderRadius: 6,
     whiteSpace: "nowrap",
   };
-
-  if (mode === "idle") {
-    return (
-      <div
-        style={wrap}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onStart}
-          style={{
-            ...btn,
-            background: "var(--primary-soft)",
-            color: "var(--primary)",
-          }}
-          title="모듈을 순서대로 탭해서 하나의 노트로 합치기"
-        >
-          📝 순서대로 합치기
-        </button>
-      </div>
-    );
-  }
 
   const canExecute = pickedCount >= 2;
   return (

@@ -255,6 +255,7 @@ export default function Home() {
     organizedView,
     setViewMode,
     setSortKey,
+    requestMergeOrder,
   } = useCanvasStore();
   const { user, loading: authLoading } = useAuthStore();
   const [addBoardState, setAddBoardState] = useState<{
@@ -532,6 +533,13 @@ export default function Home() {
     ? normalizeBoardCategory(activeBoard)
     : "memo_schedule";
 
+  // 순서 지정 합치기: 메모/이미지 모듈이 2개 이상일 때만 시작 가능
+  const canMergeOrder = activeBoard
+    ? activeBoard.modules.filter(
+        (m) => m.type === "memo" || m.type === "image"
+      ).length >= 2
+    : false;
+
   // 정리 뷰: 활성 보드의 모드/정렬 (미지정이면 기본값)
   const activeViewMode = activeBoardId
     ? organizedView.viewModeByBoardId[activeBoardId] ?? "canvas"
@@ -799,6 +807,8 @@ export default function Home() {
                         ? () => setMapTemplateDialogOpen(true)
                         : undefined
                     }
+                    onStartMerge={requestMergeOrder}
+                    canMerge={canMergeOrder}
                     variant="inline"
                   />
                 </div>
@@ -925,6 +935,8 @@ export default function Home() {
                       ? () => setMapTemplateDialogOpen(true)
                       : undefined
                   }
+                  onStartMerge={requestMergeOrder}
+                  canMerge={canMergeOrder}
                 />
               )
             ) : (

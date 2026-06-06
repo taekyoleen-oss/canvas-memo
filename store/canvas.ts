@@ -198,6 +198,10 @@ interface CanvasStore {
   focusModuleId: string | null;
   setFocusModule(moduleId: string | null): void;
 
+  // 순서 지정 합치기 시작 요청 (툴바 → 캔버스)
+  mergeOrderRequestId: number;
+  requestMergeOrder(): void;
+
   // 실행취소 히스토리
   _history: Board[][];
   pushHistory(): void;
@@ -707,6 +711,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   lastOpenedBoardByCategory: {},
   focusGroupId: null,
   focusModuleId: null,
+  mergeOrderRequestId: 0,
   pendingGroupInvite: null,
   _history: [],
   canvasInnerByBoardId: {},
@@ -1461,6 +1466,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
   setFocusModule(moduleId) {
     set({ focusModuleId: moduleId });
+  },
+
+  requestMergeOrder() {
+    set((s) => ({ mergeOrderRequestId: s.mergeOrderRequestId + 1 }));
   },
 
   pushHistory() {
