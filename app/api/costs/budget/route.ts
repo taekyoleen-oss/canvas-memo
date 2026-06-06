@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseAdmin, missingCostEnv } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,18 +42,37 @@ export async function POST(req: NextRequest) {
       ? Number(body.alert_threshold)
       : 0.8;
 
-  const db = supabaseAdmin();
-  const { error } = await db.from("budgets").upsert(
-    {
-      provider,
-      monthly_limit_usd: limit,
-      alert_threshold: threshold,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "provider" }
-  );
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const miss = missingCostEnv();
+  if (miss.length) {
+    return NextResponse.json(
+      {
+        error: `비용 모니터 환경변수가 설정되지 않았습니다: ${miss.join(", ")}. 배포(Vercel) 환경변수에 추가하세요.`,
+        code: "not_configured",
+      },
+      { status: 503 }
+    );
   }
-  return NextResponse.json({ ok: true });
+
+  try {
+    const db = supabaseAdmin();
+    const { error } = await db.from("budgets").upsert(
+      {
+        provider,
+        monthly_limit_usd: limit,
+        alert_threshold: threshold,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "provider" }
+    );
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json(
+      { error: `예산 저장 실패: ${msg}`, code: "server_error" },
+      { status: 500 }
+    );
+  }
 }

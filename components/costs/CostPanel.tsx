@@ -214,7 +214,10 @@ export default function CostPanel({
         setData(null);
         return;
       }
-      if (!res.ok) throw new Error(`조회 실패 (${res.status})`);
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `조회 실패 (${res.status})`);
+      }
       setData((await res.json()) as CostData);
     } catch (e) {
       setError(e instanceof Error ? e.message : "조회 중 오류");

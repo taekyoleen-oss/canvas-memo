@@ -12,6 +12,17 @@ export function supabaseAdmin() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+/**
+ * 비용 모니터에 필요한 서버 환경변수 중 빠진 것의 이름 목록.
+ * 비어 있으면 설정 완료. 라우트가 throw(500) 대신 명확한 안내를 주기 위해 사용.
+ */
+export function missingCostEnv(): string[] {
+  const miss: string[] = [];
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) miss.push("NEXT_PUBLIC_SUPABASE_URL");
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) miss.push("SUPABASE_SERVICE_ROLE_KEY");
+  return miss;
+}
+
 export type DailyCostRow = {
   provider: "anthropic" | "openai";
   usage_date: string; // YYYY-MM-DD
