@@ -42,3 +42,6 @@ next-env.d.ts
 
 # supabase CLI 임시
 supabase/.temp/
+
+# 하네스 에이전트 중간 산출물(로컬 전용)
+_workspace/

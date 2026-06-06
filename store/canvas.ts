@@ -11,6 +11,8 @@ import type {
   BrainstormMapType,
   MemoData,
   BrainstormData,
+  OrganizedViewMode,
+  OrganizedSortKey,
 } from "@/types";
 import { buildCanvasMapTemplate } from "@/lib/canvas/mapTemplates";
 import { findMapToolDef } from "@/lib/canvas/mapTemplateTools";
@@ -41,10 +43,20 @@ import { applyComprehensiveClaudeTopicGuideNotes } from "@/lib/topicComprehensiv
 import {
   loadAppData,
   loadAppDataForUser,
+  loadAppDataForUserSync,
   createDebouncedSave,
   saveAppData,
   saveAppDataForUser,
 } from "@/lib/storage";
+import {
+  loadViewPrefs,
+  getViewMode,
+  getSortKey,
+  setViewModePref,
+  setSortKeyPref,
+  setGroupPrimaryPref,
+  type ViewPrefs,
+} from "@/lib/storage/viewPrefs";
 import { createClient } from "@/lib/supabase/client";
 import type { AnchorSide } from "@/lib/canvas/geometry";
 
@@ -198,9 +210,25 @@ interface CanvasStore {
   canvasInnerByBoardId: Record<string, { w: number; h: number }>;
   setCanvasInnerSize(boardId: string, width: number, height: number): void;
 
+  // ── 정리 뷰(Organized View) ──────────────────────────────────────────────
+  /** 보드별 정리 뷰 상태 (viewPrefs 미러) */
+  organizedView: {
+    viewModeByBoardId: Record<string, OrganizedViewMode>;
+    sortKeyByBoardId: Record<string, OrganizedSortKey>;
+  };
+  /** 보드 뷰 모드 설정 + viewPrefs 저장 */
+  setViewMode(boardId: string, mode: OrganizedViewMode): void;
+  /** 보드 정렬 기준 설정 + viewPrefs 저장 */
+  setSortKey(boardId: string, key: OrganizedSortKey): void;
+  /** 그룹 대표(중심) 모듈 수동 지정 + viewPrefs 저장 */
+  setGroupPrimary(boardId: string, groupKey: string, moduleId: string): void;
+
   // 초기화 (로그인한 사용자 id 기준 로컬 캐시 + 이후 Supabase)
   /** preferRemoteBoards: 이미 Supabase로 boards를 채운 뒤 — 로컬은 탭·마지막 보드 id만 반영 */
-  hydrateForUser(userId: string, opts?: { preferRemoteBoards?: boolean }): void;
+  hydrateForUser(
+    userId: string,
+    opts?: { preferRemoteBoards?: boolean }
+  ): Promise<void>;
   /** 로그아웃 시 메모리·디바운스 저장기 정리 */
   resetForLogout(): void;
   // Supabase에서 유저 데이터 로드 (로그인 후 호출)
@@ -234,6 +262,9 @@ let isSyncingAuto = false;
 
 /** 레거시 공용 키의 보드를 한 번만 현재 계정으로 옮김 (동일 브라우저 다계정 오염 방지) */
 const LEGACY_CANVAS_MIGRATED_FLAG = "mindcanvas_v1_legacy_canvas_migrated";
+
+/** 정리 뷰 설정의 in-memory 미러 (localStorage와 동기화) */
+let viewPrefsMirror: ViewPrefs = { viewMode: {}, sortKey: {}, primary: {} };
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -680,6 +711,40 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   _history: [],
   canvasInnerByBoardId: {},
   autoSyncStatus: "idle",
+  organizedView: { viewModeByBoardId: {}, sortKeyByBoardId: {} },
+
+  setViewMode(boardId, mode) {
+    viewPrefsMirror = setViewModePref(viewPrefsMirror, boardId, mode);
+    set((s) => ({
+      organizedView: {
+        ...s.organizedView,
+        viewModeByBoardId: {
+          ...s.organizedView.viewModeByBoardId,
+          [boardId]: mode,
+        },
+      },
+    }));
+  },
+
+  setSortKey(boardId, key) {
+    viewPrefsMirror = setSortKeyPref(viewPrefsMirror, boardId, key);
+    set((s) => ({
+      organizedView: {
+        ...s.organizedView,
+        sortKeyByBoardId: {
+          ...s.organizedView.sortKeyByBoardId,
+          [boardId]: key,
+        },
+      },
+    }));
+  },
+
+  setGroupPrimary(boardId, groupKey, moduleId) {
+    viewPrefsMirror = setGroupPrimaryPref(viewPrefsMirror, boardId, groupKey, moduleId);
+    // primary는 파생 계산(organizedGroups)에서 viewPrefs를 직접 읽으므로 스토어 상태 변경 불필요.
+    // 다만 구독자 재렌더를 위해 동일 참조가 아닌 새 organizedView를 설정한다.
+    set((s) => ({ organizedView: { ...s.organizedView } }));
+  },
 
   setCanvasInnerSize(boardId, width, height) {
     if (width <= 0 || height <= 0) return;
@@ -691,8 +756,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     }));
   },
 
-  hydrateForUser(userId: string, opts?: { preferRemoteBoards?: boolean }) {
-    let appData = loadAppDataForUser(userId);
+  async hydrateForUser(userId: string, opts?: { preferRemoteBoards?: boolean }) {
+    // 정리 뷰 설정 로드 (보드별 viewMode/sortKey 미러)
+    viewPrefsMirror = loadViewPrefs();
+    set({
+      organizedView: {
+        viewModeByBoardId: { ...viewPrefsMirror.viewMode },
+        sortKeyByBoardId: { ...viewPrefsMirror.sortKey },
+      },
+    });
+
+    let appData = await loadAppDataForUser(userId);
 
     if (
       !appData &&
@@ -718,7 +792,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
       debouncedSave = createDebouncedSave(() => {
         const state = get();
-        const prev = loadAppDataForUser(userId);
+        const prev = loadAppDataForUserSync(userId);
         const payload: AppData = {
           version: 1,
           theme: prev?.theme ?? "system",
@@ -786,7 +860,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       });
       debouncedSave = createDebouncedSave(() => {
         const state = get();
-        const prev = loadAppDataForUser(userId);
+        const prev = loadAppDataForUserSync(userId);
         const payload: AppData = {
           version: 1,
           theme: prev?.theme ?? "system",
@@ -909,7 +983,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
 
     debouncedSave = createDebouncedSave(() => {
       const state = get();
-      const prev = loadAppDataForUser(userId);
+      const prev = loadAppDataForUserSync(userId);
       const payload: AppData = {
         version: 1,
         theme: prev?.theme ?? "system",
@@ -930,8 +1004,8 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       didClaudeBrandingMigrate
     ) {
       const state = get();
-      const prev = loadAppDataForUser(userId);
-      saveAppDataForUser(userId, {
+      const prev = loadAppDataForUserSync(userId);
+      void saveAppDataForUser(userId, {
         version: 1,
         theme: prev?.theme ?? "system",
         boards: state.boards,
@@ -961,6 +1035,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       _history: [],
       canvasInnerByBoardId: {},
       autoSyncStatus: "idle",
+      organizedView: { viewModeByBoardId: {}, sortKeyByBoardId: {} },
     });
   },
 

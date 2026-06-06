@@ -17,6 +17,10 @@ import Sidebar from "@/components/layout/Sidebar";
 import MobileDrawer from "@/components/layout/MobileDrawer";
 import WorkspaceSwitcher from "@/components/layout/WorkspaceSwitcher";
 import Canvas from "@/components/canvas/Canvas";
+import OrganizedView from "@/components/organized/OrganizedView";
+import ViewModeToggle from "@/components/organized/ViewModeToggle";
+import SortMenu from "@/components/organized/SortMenu";
+import { useOrganizedOverlayStore } from "@/store/organizedOverlay";
 import ModuleToolbar from "@/components/ui-overlays/ModuleToolbar";
 import ModuleSearch from "@/components/ui-overlays/ModuleSearch";
 import MapTemplateDialog from "@/components/canvas/MapTemplateDialog";
@@ -248,6 +252,9 @@ export default function Home() {
     resetForLogout,
     applyMapTemplate,
     markHydrated,
+    organizedView,
+    setViewMode,
+    setSortKey,
   } = useCanvasStore();
   const { user, loading: authLoading } = useAuthStore();
   const [addBoardState, setAddBoardState] = useState<{
@@ -272,7 +279,17 @@ export default function Home() {
     showSearch: false,
     showMobileDrawer: false,
     showCostPanel: false,
+    organizedEditorOpen: false,
+    organizedGroupOpen: false,
   });
+
+  // 정리 뷰 오버레이(편집/그룹 팝업) — popstate 우선순위 스택에서 가장 먼저 닫는다.
+  const organizedEditingModuleId = useOrganizedOverlayStore(
+    (s) => s.editingModuleId
+  );
+  const organizedExpandedEntry = useOrganizedOverlayStore(
+    (s) => s.expandedEntry
+  );
 
   // 로그인: 원격에 보드가 있으면 Supabase → repair → 로컬은 탭/마지막 보드만 병합(보드 그래프 덮어쓰기 방지)
   useEffect(() => {
@@ -302,9 +319,9 @@ export default function Home() {
         if (cancelled) return;
         await recoverFromBrowserCaches(user.id);
         if (cancelled) return;
-        hydrateForUser(user.id, { preferRemoteBoards: true });
+        await hydrateForUser(user.id, { preferRemoteBoards: true });
       } else {
-        hydrateForUser(user.id);
+        await hydrateForUser(user.id);
         if (cancelled) return;
         await hydrateFromSupabase(user.id);
         if (cancelled) return;
@@ -403,6 +420,8 @@ export default function Home() {
       showSearch,
       showMobileDrawer,
       showCostPanel,
+      organizedEditorOpen: organizedEditingModuleId !== null,
+      organizedGroupOpen: organizedExpandedEntry !== null,
     };
   }, [
     showExitConfirm,
@@ -411,6 +430,8 @@ export default function Home() {
     showSearch,
     showMobileDrawer,
     showCostPanel,
+    organizedEditingModuleId,
+    organizedExpandedEntry,
   ]);
 
   // 뒤로가기(Back) 버튼 → 열려 있는 오버레이/전체보기를 먼저 닫고, 다 닫혔을 때만 종료 확인.
@@ -449,6 +470,15 @@ export default function Home() {
       const s = overlayStateRef.current;
 
       // 우선순위 stack: 상단 오버레이부터 닫는다.
+      // 정리 뷰: 편집 오버레이 → 그룹 확장 팝업 을 가장 먼저 닫는다(스펙 §7-6).
+      if (s.organizedEditorOpen) {
+        useOrganizedOverlayStore.getState().closeEditor();
+        return;
+      }
+      if (s.organizedGroupOpen) {
+        useOrganizedOverlayStore.getState().closeGroup();
+        return;
+      }
       if (s.showExitConfirm) {
         setShowExitConfirm(false);
         return;
@@ -501,6 +531,22 @@ export default function Home() {
   const activeBoardCategory: BoardCategory = activeBoard
     ? normalizeBoardCategory(activeBoard)
     : "memo_schedule";
+
+  // 정리 뷰: 활성 보드의 모드/정렬 (미지정이면 기본값)
+  const activeViewMode = activeBoardId
+    ? organizedView.viewModeByBoardId[activeBoardId] ?? "canvas"
+    : "canvas";
+  const activeSortKey = activeBoardId
+    ? organizedView.sortKeyByBoardId[activeBoardId] ?? "createdDesc"
+    : "createdDesc";
+  const isOrganized = activeViewMode === "organized";
+
+  // 보드 전환 또는 캔버스 모드 복귀 시 정리 뷰 오버레이를 모두 닫는다(스테일 방지).
+  useEffect(() => {
+    if (!isOrganized) {
+      useOrganizedOverlayStore.getState().closeAll();
+    }
+  }, [activeBoardId, isOrganized]);
 
   const workspaceBoards = useMemo(
     () => boardsForWorkspace(boards, activeWorkspace),
@@ -727,21 +773,58 @@ export default function Home() {
         >
           <WorkspaceSwitcher />
           {activeBoardId ? (
-            <ModuleToolbar
-              boardCategory={activeBoardCategory}
-              onAdd={handleAddModule}
-              onSearch={() => setShowSearch(true)}
-              onMapTemplates={
-                activeBoardCategory === "thinking"
-                  ? () => setMapTemplateDialogOpen(true)
-                  : undefined
-              }
-            />
+            isOrganized ? (
+              <div
+                className="flex min-h-[48px] items-center gap-2 px-4"
+                style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+              >
+                <ViewModeToggle
+                  mode={activeViewMode}
+                  onChange={(m) => setViewMode(activeBoardId, m)}
+                />
+                <SortMenu
+                  sortKey={activeSortKey}
+                  onChange={(k) => setSortKey(activeBoardId, k)}
+                />
+              </div>
+            ) : (
+              <div className="flex w-full items-stretch" style={{ background: "var(--surface)" }}>
+                <div className="min-w-0 flex-1">
+                  <ModuleToolbar
+                    boardCategory={activeBoardCategory}
+                    onAdd={handleAddModule}
+                    onSearch={() => setShowSearch(true)}
+                    onMapTemplates={
+                      activeBoardCategory === "thinking"
+                        ? () => setMapTemplateDialogOpen(true)
+                        : undefined
+                    }
+                    variant="inline"
+                  />
+                </div>
+                <div
+                  className="flex flex-shrink-0 items-center px-2"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  <ViewModeToggle
+                    mode={activeViewMode}
+                    onChange={(m) => setViewMode(activeBoardId, m)}
+                  />
+                </div>
+              </div>
+            )
           ) : null}
         </div>
         <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
-            <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
+            isOrganized && activeBoard ? (
+              <OrganizedView
+                board={activeBoard}
+                onSwitchToCanvas={() => setViewMode(activeBoardId, "canvas")}
+              />
+            ) : (
+              <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
+            )
           ) : (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
               <span style={{ color: "var(--text-muted)", fontSize: 14, textAlign: "center" }}>
@@ -786,6 +869,17 @@ export default function Home() {
               <div className="min-w-0 flex-1">
                 <WorkspaceSwitcher />
               </div>
+              {activeBoardId ? (
+                <div
+                  className="flex flex-shrink-0 items-center px-2"
+                  style={{ borderBottom: "1px solid var(--border)" }}
+                >
+                  <ViewModeToggle
+                    mode={activeViewMode}
+                    onChange={(m) => setViewMode(activeBoardId, m)}
+                  />
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setShowCostPanel(true)}
@@ -805,16 +899,34 @@ export default function Home() {
               </button>
             </div>
             {activeBoardId ? (
-              <ModuleToolbar
-                boardCategory={activeBoardCategory}
-                onAdd={handleAddModule}
-                onSearch={() => setShowSearch(true)}
-                onMapTemplates={
-                  activeBoardCategory === "thinking"
-                    ? () => setMapTemplateDialogOpen(true)
-                    : undefined
-                }
-              />
+              isOrganized ? (
+                <div
+                  className="flex min-h-[48px] items-center gap-2 px-4"
+                  style={{ background: "var(--surface)" }}
+                >
+                  <span
+                    className="text-xs font-medium"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    정리 뷰
+                  </span>
+                  <SortMenu
+                    sortKey={activeSortKey}
+                    onChange={(k) => setSortKey(activeBoardId, k)}
+                  />
+                </div>
+              ) : (
+                <ModuleToolbar
+                  boardCategory={activeBoardCategory}
+                  onAdd={handleAddModule}
+                  onSearch={() => setShowSearch(true)}
+                  onMapTemplates={
+                    activeBoardCategory === "thinking"
+                      ? () => setMapTemplateDialogOpen(true)
+                      : undefined
+                  }
+                />
+              )
             ) : (
               <div
                 className="flex min-h-[48px] flex-1 items-center px-4 text-xs font-medium"
@@ -826,7 +938,14 @@ export default function Home() {
           </div>
           <div className="flex-1 relative overflow-hidden">
             {activeBoardId ? (
-              <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
+              isOrganized && activeBoard ? (
+                <OrganizedView
+                  board={activeBoard}
+                  onSwitchToCanvas={() => setViewMode(activeBoardId, "canvas")}
+                />
+              ) : (
+                <Canvas boardId={activeBoardId} onAddModule={handleAddModule} />
+              )
             ) : (
               <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
                 <span style={{ color: "var(--text-muted)", fontSize: 14, textAlign: "center" }}>

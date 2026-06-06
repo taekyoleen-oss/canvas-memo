@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { loadAppDataForUser, saveAppDataForUser } from "@/lib/storage";
+import { loadAppDataForUserSync, saveAppDataForUser } from "@/lib/storage";
 import { useAuthStore } from "@/store/auth";
 
 interface ThemeStore {
@@ -17,13 +17,13 @@ export const useThemeStore = create<ThemeStore>((set) => ({
     const userId = useAuthStore.getState().user?.id;
     if (!userId) return;
 
-    const existing = loadAppDataForUser(userId);
+    const existing = loadAppDataForUserSync(userId);
     const base = existing ?? {
       version: 1,
       theme: "system",
       boards: [],
       lastOpenedBoardId: null,
     };
-    saveAppDataForUser(userId, { ...base, theme });
+    void saveAppDataForUser(userId, { ...base, theme });
   },
 }));

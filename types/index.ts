@@ -188,6 +188,32 @@ export interface TableData {
   cells: string[];
 }
 
+// ── 정리 뷰(Organized View) ─────────────────────────────────────────────
+/** 보드 표시 모드 — 자유 배치 캔버스 / 읽기 최적화 정리 뷰 */
+export type OrganizedViewMode = "canvas" | "organized";
+
+/** 정리 뷰 정렬 기준 */
+export type OrganizedSortKey = "createdDesc" | "title" | "updatedDesc";
+
+/** 표시용 엔트리 종류 (단일 모듈 / 그룹) */
+export type DisplayEntryKind = "single" | "group";
+
+/**
+ * 정리 뷰 표시용 파생 엔트리(영속 아님).
+ * `lib/canvas/organizedGroups.ts`(canvas-engine)가 boards에서 계산해 생성한다.
+ */
+export interface DisplayEntry {
+  kind: DisplayEntryKind;
+  /** 정렬 키 계산 기준 모듈(단일=자기 자신, 그룹=대표 모듈) */
+  anchor: Module;
+  /** group일 때만: 대표 포함 전체 멤버(대표가 [0]) */
+  members?: Module[];
+  /** group 출처 */
+  groupSource?: "connection" | "group" | "mapBundle";
+  /** group 식별자(Group.id | bundleId | 연결 컴포넌트 서명) */
+  groupKey?: string;
+}
+
 export interface Connection {
   id: string;
   fromModuleId: string;

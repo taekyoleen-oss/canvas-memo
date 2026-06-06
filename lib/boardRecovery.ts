@@ -4,7 +4,7 @@ import {
   STORAGE_KEY,
   canvasStorageKey,
   loadAppData,
-  loadAppDataForUser,
+  loadAppDataForUserSync,
 } from "@/lib/storage";
 
 function pickRicherModule(a: Module, b: Module): Module {
@@ -121,7 +121,7 @@ function appendBoardsToMap(
 export function collectSnapshotsForMerge(userId: string): Map<string, Board[]> {
   const byId = new Map<string, Board[]>();
 
-  appendBoardsToMap(byId, loadAppDataForUser(userId)?.boards);
+  appendBoardsToMap(byId, loadAppDataForUserSync(userId)?.boards);
   appendBoardsToMap(byId, loadAppData()?.boards);
 
   if (typeof window !== "undefined") {
