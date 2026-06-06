@@ -72,6 +72,8 @@ export default function ModuleContextMenu({
   zIndexBase = 90,
 }: ModuleContextMenuProps) {
   const [moveTargetId, setMoveTargetId] = useState("");
+  // 「다른 보드로 이동」 보드 목록은 기본 접힘 — 펼칠 때만 공간 차지
+  const [moveExpanded, setMoveExpanded] = useState(false);
 
   const hasMoveBlock =
     !!onMoveToBoard &&
@@ -79,7 +81,10 @@ export default function ModuleContextMenu({
     moveBoardOptions.some((o) => !o.disabled);
 
   useEffect(() => {
-    if (isOpen) setMoveTargetId("");
+    if (isOpen) {
+      setMoveTargetId("");
+      setMoveExpanded(false);
+    }
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -121,7 +126,7 @@ export default function ModuleContextMenu({
   ];
 
   const menuHeight =
-    (hasMoveBlock ? MOVE_BLOCK_HEIGHT : 0) +
+    (hasMoveBlock ? (moveExpanded ? MOVE_BLOCK_HEIGHT : MENU_ROW_BASE) : 0) +
     items.reduce(
       (h, it) => h + (it.subtitle ? MENU_ROW_TALL : MENU_ROW_BASE),
       0
@@ -172,24 +177,41 @@ export default function ModuleContextMenu({
       <div
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className="px-5 md:px-3"
-        style={{
-          borderBottom: "1px solid var(--border)",
-          paddingTop: 10,
-          paddingBottom: 10,
-        }}
+        style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "var(--text-muted)",
-              margin: 0,
-            }}
+        {/* 접힘 토글 행 — 다른 메뉴 항목과 동일한 한 줄 */}
+        <button
+          type="button"
+          onClick={() => setMoveExpanded((v) => !v)}
+          className="flex w-full items-center gap-3 px-5 md:px-4"
+          style={{
+            minHeight: MENU_ROW_BASE,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--text-primary)",
+            textAlign: "left",
+          }}
+        >
+          <span
+            style={{ fontSize: 16, width: 22, textAlign: "center", flexShrink: 0 }}
           >
+            📂
+          </span>
+          <span className="flex-1" style={{ fontSize: 14, fontWeight: 600 }}>
             다른 보드로 이동
-          </p>
+          </span>
+          <span
+            style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}
+            aria-hidden
+          >
+            {moveExpanded ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {!moveExpanded ? null : (
+        <div className="px-5 md:px-4" style={{ paddingBottom: 10 }}>
+        <div className="flex items-center justify-end" style={{ marginBottom: 6 }}>
           <button
             type="button"
             disabled={!moveTargetId}
@@ -212,7 +234,7 @@ export default function ModuleContextMenu({
         </div>
         <div
           style={{
-            maxHeight: 220,
+            maxHeight: 180,
             overflowY: "auto",
             display: "flex",
             flexDirection: "column",
@@ -263,6 +285,8 @@ export default function ModuleContextMenu({
             </div>
           ))}
         </div>
+        </div>
+        )}
       </div>
     ) : null;
 
