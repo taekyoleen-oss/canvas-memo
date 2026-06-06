@@ -24,6 +24,7 @@ import BrainstormModule, {
   type BrainstormCanvasLinkSummary,
 } from "@/components/modules/BrainstormModule";
 import { MODULE_TYPE_ICON, cardTitle } from "./organizedPreview";
+import OrganizedModuleMenu from "./OrganizedModuleMenu";
 
 interface ModuleEditOverlayProps {
   boardId: string;
@@ -220,6 +221,12 @@ export default function ModuleEditOverlay({
               {cardTitle(mod)}
             </span>
           )}
+          {/* 제목 옆 ⋮ — 캔버스와 동일한 모듈 액션. 삭제 시 오버레이도 닫기 */}
+          <OrganizedModuleMenu
+            boardId={boardId}
+            moduleId={moduleId}
+            onDeleted={onClose}
+          />
           <button
             type="button"
             onClick={onClose}

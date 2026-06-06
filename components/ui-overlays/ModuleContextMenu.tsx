@@ -30,6 +30,10 @@ interface ModuleContextMenuProps {
   /** 세 카테고리(메모·일정 / 생각정리 / 주제별) 전체에서 이동 가능한 보드 */
   moveBoardOptions?: MoveBoardOption[];
   onMoveToBoard?: (targetBoardId: string) => void;
+  /** false면 「연결하기」 항목을 숨긴다(정리 뷰 등 캔버스 좌표가 없는 곳). 기본 true */
+  showConnect?: boolean;
+  /** 배경/메뉴 z-index 기준값(기본 90). 더 높은 오버레이 위에 띄울 때 올린다. */
+  zIndexBase?: number;
 }
 
 interface MenuItem {
@@ -64,6 +68,8 @@ export default function ModuleContextMenu({
   onDelete,
   moveBoardOptions,
   onMoveToBoard,
+  showConnect = true,
+  zIndexBase = 90,
 }: ModuleContextMenuProps) {
   const [moveTargetId, setMoveTargetId] = useState("");
 
@@ -79,7 +85,9 @@ export default function ModuleContextMenu({
   if (!isOpen) return null;
 
   const items: MenuItem[] = [
-    { id: "connect", icon: "🔗", label: "연결하기", action: onConnect },
+    ...(showConnect
+      ? [{ id: "connect", icon: "🔗", label: "연결하기", action: onConnect }]
+      : []),
     { id: "color", icon: "🎨", label: "색상 변경", action: onColorChange },
     {
       id: "dup",
@@ -264,13 +272,13 @@ export default function ModuleContextMenu({
       <div className="md:hidden">
         <div
           className="fixed inset-0"
-          style={{ zIndex: 90, background: "rgba(0,0,0,0.4)" }}
+          style={{ zIndex: zIndexBase, background: "rgba(0,0,0,0.4)" }}
           onClick={onClose}
         />
         <div
           className="fixed bottom-0 left-0 right-0 rounded-t-2xl pb-6"
           style={{
-            zIndex: 91,
+            zIndex: zIndexBase + 1,
             background: "var(--surface-elevated)",
             border: "1px solid var(--border)",
             animation: "slideUp 300ms ease-out",
@@ -333,13 +341,13 @@ export default function ModuleContextMenu({
         {/* 배경 클릭 시 닫기 */}
         <div
           className="fixed inset-0"
-          style={{ zIndex: 90 }}
+          style={{ zIndex: zIndexBase }}
           onClick={onClose}
         />
         <div
           className="fixed rounded-xl overflow-hidden"
           style={{
-            zIndex: 91,
+            zIndex: zIndexBase + 1,
             top: pos.top,
             left: pos.left,
             minWidth: MENU_WIDTH,

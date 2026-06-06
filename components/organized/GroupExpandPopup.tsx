@@ -9,6 +9,7 @@ import OrganizedPreview, {
   cardTitle,
   moduleTypeLabel,
 } from "./organizedPreview";
+import OrganizedModuleMenu from "./OrganizedModuleMenu";
 
 interface GroupExpandPopupProps {
   entry: DisplayEntry;
@@ -119,7 +120,7 @@ export default function GroupExpandPopup({
                 return (
                   <div
                     key={m.id}
-                    className="flex flex-col rounded-xl"
+                    className="relative flex flex-col rounded-xl"
                     style={{
                       background: "var(--surface)",
                       border: isAnchor
@@ -129,6 +130,10 @@ export default function GroupExpandPopup({
                       overflow: "hidden",
                     }}
                   >
+                    {/* 우상단 ⋮ — 멤버 카드에도 캔버스와 동일한 모듈 액션 */}
+                    <div className="absolute right-1 top-1 z-[1]">
+                      <OrganizedModuleMenu boardId={boardId} moduleId={m.id} />
+                    </div>
                     <button
                       type="button"
                       onClick={() => onOpenMember(m)}
@@ -157,11 +162,14 @@ export default function GroupExpandPopup({
                             style={{
                               background: "var(--primary-soft)",
                               color: "var(--primary)",
+                              marginRight: 36,
                             }}
                           >
                             ⭐ 대표
                           </span>
-                        ) : null}
+                        ) : (
+                          <span style={{ width: 36, flexShrink: 0 }} aria-hidden />
+                        )}
                       </div>
                       <OrganizedPreview module={m} compact />
                     </button>

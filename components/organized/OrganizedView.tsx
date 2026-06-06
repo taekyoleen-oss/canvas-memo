@@ -111,6 +111,7 @@ export default function OrganizedView({ board, onSwitchToCanvas }: OrganizedView
             ) : (
               <OrganizedCard
                 key={entryKey(entry)}
+                boardId={board.id}
                 module={entry.anchor}
                 onOpen={(m) => openEditor(m.id)}
               />
