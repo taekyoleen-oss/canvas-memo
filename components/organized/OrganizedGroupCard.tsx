@@ -5,8 +5,11 @@ import OrganizedPreview, {
   MODULE_TYPE_ICON,
   cardTitle,
 } from "./organizedPreview";
+import OrganizedModuleMenu from "./OrganizedModuleMenu";
 
 interface OrganizedGroupCardProps {
+  /** 활성 보드 id — 대표 모듈 액션(복사·삭제 등)에 필요 */
+  boardId: string;
   entry: DisplayEntry;
   onExpand: (entry: DisplayEntry) => void;
 }
@@ -18,10 +21,15 @@ const SOURCE_LABEL: Record<NonNullable<DisplayEntry["groupSource"]>, string> = {
 };
 
 /**
- * 그룹 카드 — 대표 모듈 미리보기 + 우상단 🔗N 배지 + 멤버 타입 믹스.
- * 클릭 → 그룹 확장 팝업.
+ * 그룹 카드 — 대표 모듈 미리보기 + 멤버 타입 믹스 + 🔗N.
+ * 본문 클릭 → 그룹 확장 팝업. 우상단 ⋮ → 대표 모듈에 캔버스와 동일한 액션(복사·삭제 등).
+ * (개별 멤버 액션은 펼침 팝업의 각 멤버 ⋮ 에서 동일하게 제공)
  */
-export default function OrganizedGroupCard({ entry, onExpand }: OrganizedGroupCardProps) {
+export default function OrganizedGroupCard({
+  boardId,
+  entry,
+  onExpand,
+}: OrganizedGroupCardProps) {
   const anchor = entry.anchor;
   const members = entry.members ?? [anchor];
   const count = members.length;
@@ -34,16 +42,13 @@ export default function OrganizedGroupCard({ entry, onExpand }: OrganizedGroupCa
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => onExpand(entry)}
-      className="relative flex w-full flex-col gap-2 rounded-xl p-3 text-left transition-shadow"
+    <div
+      className="relative flex w-full flex-col rounded-xl transition-shadow"
       style={{
         minHeight: 44,
         background: "var(--surface-elevated)",
         border: "1px solid var(--border)",
         boxShadow: "var(--shadow-sm)",
-        cursor: "pointer",
       }}
       onMouseEnter={(e) => {
         (e.currentTarget as HTMLElement).style.boxShadow = "var(--shadow-md)";
@@ -51,52 +56,65 @@ export default function OrganizedGroupCard({ entry, onExpand }: OrganizedGroupCa
       onMouseLeave={(e) => {
         (e.currentTarget as HTMLElement).style.boxShadow = "var(--shadow-sm)";
       }}
-      aria-label={`그룹 (${count}개 모듈) · ${cardTitle(anchor)} 펼치기`}
     >
-      {/* 우상단 🔗N 배지 */}
-      <span
-        className="absolute right-2 top-2 flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold"
+      <button
+        type="button"
+        onClick={() => onExpand(entry)}
+        className="flex w-full flex-col gap-2 p-3 text-left"
         style={{
-          background: "var(--primary-soft)",
-          color: "var(--primary)",
-          border: "1px solid var(--primary)",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
         }}
-        aria-hidden
+        aria-label={`그룹 (${count}개 모듈) · ${cardTitle(anchor)} 펼치기`}
       >
-        🔗 {count}
-      </span>
-
-      <div className="flex items-center gap-1.5 pr-12">
-        <span style={{ fontSize: 14, flexShrink: 0 }} aria-hidden>
-          {MODULE_TYPE_ICON[anchor.type]}
-        </span>
-        <span
-          className="min-w-0 flex-1 truncate text-sm font-semibold"
-          style={{ color: "var(--text-primary)" }}
-        >
-          {cardTitle(anchor)}
-        </span>
-      </div>
-
-      {/* 대표 미리보기 */}
-      <OrganizedPreview module={anchor} compact />
-
-      {/* 출처 + 멤버 타입 믹스 */}
-      <div className="flex items-center gap-1.5 pt-0.5">
-        <span
-          className="rounded px-1.5 py-0.5 text-[10px] font-medium"
-          style={{ background: "var(--surface-hover)", color: "var(--text-muted)" }}
-        >
-          {SOURCE_LABEL[source]}
-        </span>
-        <div className="flex items-center gap-0.5">
-          {typeMix.slice(0, 6).map((t, i) => (
-            <span key={`${t}-${i}`} style={{ fontSize: 12 }} aria-hidden title={t}>
-              {MODULE_TYPE_ICON[t]}
-            </span>
-          ))}
+        <div className="flex items-center gap-1.5" style={{ paddingRight: 84 }}>
+          <span style={{ fontSize: 14, flexShrink: 0 }} aria-hidden>
+            {MODULE_TYPE_ICON[anchor.type]}
+          </span>
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-semibold"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {cardTitle(anchor)}
+          </span>
         </div>
+
+        {/* 대표 미리보기 */}
+        <OrganizedPreview module={anchor} compact />
+
+        {/* 출처 + 🔗N + 멤버 타입 믹스 */}
+        <div className="flex items-center gap-1.5 pt-0.5">
+          <span
+            className="flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
+            style={{
+              background: "var(--primary-soft)",
+              color: "var(--primary)",
+              border: "1px solid var(--primary)",
+            }}
+          >
+            🔗 {count}
+          </span>
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+            style={{ background: "var(--surface-hover)", color: "var(--text-muted)" }}
+          >
+            {SOURCE_LABEL[source]}
+          </span>
+          <div className="flex items-center gap-0.5">
+            {typeMix.slice(0, 6).map((t, i) => (
+              <span key={`${t}-${i}`} style={{ fontSize: 12 }} aria-hidden title={t}>
+                {MODULE_TYPE_ICON[t]}
+              </span>
+            ))}
+          </div>
+        </div>
+      </button>
+
+      {/* 우상단 ⋮ — 대표 모듈에 캔버스와 동일한 액션(복사·삭제·색상·이동 등) */}
+      <div className="absolute right-1 top-1">
+        <OrganizedModuleMenu boardId={boardId} moduleId={anchor.id} />
       </div>
-    </button>
+    </div>
   );
 }

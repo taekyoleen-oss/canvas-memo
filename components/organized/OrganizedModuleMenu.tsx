@@ -181,6 +181,13 @@ export default function OrganizedModuleMenu({
         );
       }}
       onPointerDown={(e) => e.stopPropagation()}
+      onMouseEnter={(e) =>
+        ((e.currentTarget as HTMLElement).style.background =
+          "var(--surface-hover)")
+      }
+      onMouseLeave={(e) =>
+        ((e.currentTarget as HTMLElement).style.background = "transparent")
+      }
       className="flex flex-shrink-0 items-center justify-center rounded-lg"
       style={{
         width: 44,
@@ -188,8 +195,8 @@ export default function OrganizedModuleMenu({
         background: "transparent",
         border: "none",
         cursor: "pointer",
-        color: "var(--text-muted)",
-        fontSize: 18,
+        color: "var(--text-secondary)",
+        fontSize: 20,
         lineHeight: 1,
       }}
     >

@@ -105,6 +105,7 @@ export default function OrganizedView({ board, onSwitchToCanvas }: OrganizedView
             entry.kind === "group" ? (
               <OrganizedGroupCard
                 key={entryKey(entry)}
+                boardId={board.id}
                 entry={entry}
                 onExpand={openGroup}
               />
