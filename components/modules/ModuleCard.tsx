@@ -207,18 +207,34 @@ export default function ModuleCard({
               }}
             />
           ) : (
-            <span
-              data-module-header-title
-              className="min-w-0 flex-1 cursor-grab truncate text-sm font-medium"
-              style={{ color: "var(--text-primary)" }}
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                setIsTitleEditing(true);
-              }}
-              title="더블클릭: 제목 편집"
-            >
-              {getModuleTitle(module)}
-            </span>
+            (() => {
+              const rawTitle =
+                (module.data as { title?: string }).title?.trim() ?? "";
+              // 제목이 비어 있고 URL 등 대체 제목도 없으면 입력 유도 힌트 표시
+              const showHint =
+                !rawTitle && getModuleTitle(module) === "제목 없음";
+              const hintLabel = `${titleInputPlaceholder ?? "제목"} 입력(더블클릭)`;
+              return (
+                <span
+                  data-module-header-title
+                  className="min-w-0 flex-1 cursor-grab truncate text-sm font-medium"
+                  style={{
+                    color: showHint
+                      ? "var(--text-muted)"
+                      : "var(--text-primary)",
+                    fontStyle: showHint ? "italic" : undefined,
+                    fontWeight: showHint ? 400 : undefined,
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    setIsTitleEditing(true);
+                  }}
+                  title="더블클릭: 제목 편집"
+                >
+                  {showHint ? hintLabel : getModuleTitle(module)}
+                </span>
+              );
+            })()
           )
         ) : (
           <span
