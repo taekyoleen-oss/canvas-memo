@@ -439,6 +439,27 @@ export default function CostPanel({
                 API는 사용액만 제공합니다. &quot;남은 금액&quot;은 설정한 월 예산에서 이번 달 사용액을 뺀 값입니다.
                 ↻ 또는 위 백필 버튼으로 동기화하세요. 표시 금액은 공급사 Admin API가 보고하는 조직(Organization) 단위 사용액입니다.
               </p>
+              <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                💳 실제 충전 잔액은 API로 제공되지 않습니다 — Claude는{" "}
+                <a
+                  href="https://console.anthropic.com/settings/billing"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--primary)", textDecoration: "underline" }}
+                >
+                  Anthropic 콘솔
+                </a>
+                , OpenAI는{" "}
+                <a
+                  href="https://platform.openai.com/settings/organization/billing/overview"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "var(--primary)", textDecoration: "underline" }}
+                >
+                  OpenAI 콘솔
+                </a>
+                의 Billing에서 확인하세요.
+              </p>
             </>
           )}
         </div>
