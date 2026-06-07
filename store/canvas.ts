@@ -55,6 +55,7 @@ import {
   setViewModePref,
   setSortKeyPref,
   setGroupPrimaryPref,
+  setCustomOrderPref,
   type ViewPrefs,
 } from "@/lib/storage/viewPrefs";
 import { createClient } from "@/lib/supabase/client";
@@ -219,6 +220,7 @@ interface CanvasStore {
   organizedView: {
     viewModeByBoardId: Record<string, OrganizedViewMode>;
     sortKeyByBoardId: Record<string, OrganizedSortKey>;
+    customOrderByBoardId: Record<string, string[]>;
   };
   /** 보드 뷰 모드 설정 + viewPrefs 저장 */
   setViewMode(boardId: string, mode: OrganizedViewMode): void;
@@ -226,6 +228,11 @@ interface CanvasStore {
   setSortKey(boardId: string, key: OrganizedSortKey): void;
   /** 그룹 대표(중심) 모듈 수동 지정 + viewPrefs 저장 */
   setGroupPrimary(boardId: string, groupKey: string, moduleId: string): void;
+  /**
+   * 사용자정의 순서 저장 + 정렬 기준을 자동으로 "custom" 으로 전환 + viewPrefs 저장.
+   * 정리 뷰에서 모듈을 드래그해 놓을 때 호출한다.
+   */
+  setCustomOrder(boardId: string, order: string[]): void;
 
   // 초기화 (로그인한 사용자 id 기준 로컬 캐시 + 이후 Supabase)
   /** preferRemoteBoards: 이미 Supabase로 boards를 채운 뒤 — 로컬은 탭·마지막 보드 id만 반영 */
@@ -268,7 +275,12 @@ let isSyncingAuto = false;
 const LEGACY_CANVAS_MIGRATED_FLAG = "mindcanvas_v1_legacy_canvas_migrated";
 
 /** 정리 뷰 설정의 in-memory 미러 (localStorage와 동기화) */
-let viewPrefsMirror: ViewPrefs = { viewMode: {}, sortKey: {}, primary: {} };
+let viewPrefsMirror: ViewPrefs = {
+  viewMode: {},
+  sortKey: {},
+  primary: {},
+  customOrder: {},
+};
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -716,7 +728,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
   _history: [],
   canvasInnerByBoardId: {},
   autoSyncStatus: "idle",
-  organizedView: { viewModeByBoardId: {}, sortKeyByBoardId: {} },
+  organizedView: {
+    viewModeByBoardId: {},
+    sortKeyByBoardId: {},
+    customOrderByBoardId: {},
+  },
 
   setViewMode(boardId, mode) {
     viewPrefsMirror = setViewModePref(viewPrefsMirror, boardId, mode);
@@ -751,6 +767,25 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
     set((s) => ({ organizedView: { ...s.organizedView } }));
   },
 
+  setCustomOrder(boardId, order) {
+    viewPrefsMirror = setCustomOrderPref(viewPrefsMirror, boardId, order);
+    // 드래그로 순서를 바꾸면 정렬 기준을 자동으로 "custom" 으로 전환한다.
+    viewPrefsMirror = setSortKeyPref(viewPrefsMirror, boardId, "custom");
+    set((s) => ({
+      organizedView: {
+        ...s.organizedView,
+        sortKeyByBoardId: {
+          ...s.organizedView.sortKeyByBoardId,
+          [boardId]: "custom",
+        },
+        customOrderByBoardId: {
+          ...s.organizedView.customOrderByBoardId,
+          [boardId]: order,
+        },
+      },
+    }));
+  },
+
   setCanvasInnerSize(boardId, width, height) {
     if (width <= 0 || height <= 0) return;
     set((s) => ({
@@ -768,6 +803,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       organizedView: {
         viewModeByBoardId: { ...viewPrefsMirror.viewMode },
         sortKeyByBoardId: { ...viewPrefsMirror.sortKey },
+        customOrderByBoardId: { ...viewPrefsMirror.customOrder },
       },
     });
 
@@ -1040,7 +1076,11 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
       _history: [],
       canvasInnerByBoardId: {},
       autoSyncStatus: "idle",
-      organizedView: { viewModeByBoardId: {}, sortKeyByBoardId: {} },
+      organizedView: {
+        viewModeByBoardId: {},
+        sortKeyByBoardId: {},
+        customOrderByBoardId: {},
+      },
     });
   },
 

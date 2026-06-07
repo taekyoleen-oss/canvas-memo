@@ -13,6 +13,7 @@ const OPTIONS: { id: OrganizedSortKey; label: string; hint: string }[] = [
   { id: "createdDesc", label: "만든순(최신)", hint: "최근에 만든 것이 먼저" },
   { id: "title", label: "가나다", hint: "제목 가나다순" },
   { id: "updatedDesc", label: "수정순", hint: "최근에 고친 것이 먼저" },
+  { id: "custom", label: "사용자정의", hint: "카드를 끌어 직접 정한 순서" },
 ];
 
 function labelOf(key: OrganizedSortKey): string {

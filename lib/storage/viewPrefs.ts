@@ -19,10 +19,12 @@ export interface ViewPrefs {
   sortKey: Record<string, OrganizedSortKey>;
   /** boardId → (groupKey → 대표 moduleId) 수동 지정 */
   primary: Record<string, Record<string, string>>;
+  /** boardId → 사용자정의 순서(정리 뷰 엔트리 key의 배열) */
+  customOrder: Record<string, string[]>;
 }
 
 function emptyPrefs(): ViewPrefs {
-  return { viewMode: {}, sortKey: {}, primary: {} };
+  return { viewMode: {}, sortKey: {}, primary: {}, customOrder: {} };
 }
 
 function isViewMode(v: unknown): v is OrganizedViewMode {
@@ -30,7 +32,12 @@ function isViewMode(v: unknown): v is OrganizedViewMode {
 }
 
 function isSortKey(v: unknown): v is OrganizedSortKey {
-  return v === "createdDesc" || v === "title" || v === "updatedDesc";
+  return (
+    v === "createdDesc" ||
+    v === "title" ||
+    v === "updatedDesc" ||
+    v === "custom"
+  );
 }
 
 /** localStorage에서 ViewPrefs를 읽어 검증된 형태로 반환. 없거나 손상 시 빈 기본값. */
@@ -74,7 +81,19 @@ export function loadViewPrefs(): ViewPrefs {
       }
     }
 
-    return { viewMode, sortKey, primary };
+    const customOrder: Record<string, string[]> = {};
+    if (o.customOrder && typeof o.customOrder === "object") {
+      for (const [boardId, keys] of Object.entries(
+        o.customOrder as Record<string, unknown>
+      )) {
+        if (Array.isArray(keys)) {
+          const list = keys.filter((k): k is string => typeof k === "string");
+          if (list.length > 0) customOrder[boardId] = list;
+        }
+      }
+    }
+
+    return { viewMode, sortKey, primary, customOrder };
   } catch (err) {
     console.error("[MindCanvas] Failed to load view prefs:", err);
     return emptyPrefs();
@@ -133,6 +152,25 @@ export function setSortKeyPref(
   const next: ViewPrefs = {
     ...prefs,
     sortKey: { ...prefs.sortKey, [boardId]: key },
+  };
+  saveViewPrefs(next);
+  return next;
+}
+
+/** 보드의 사용자정의 순서 조회 (없으면 빈 배열) */
+export function getCustomOrder(prefs: ViewPrefs, boardId: string): string[] {
+  return prefs.customOrder[boardId] ?? [];
+}
+
+/** 사용자정의 순서 설정 후 저장. */
+export function setCustomOrderPref(
+  prefs: ViewPrefs,
+  boardId: string,
+  order: string[]
+): ViewPrefs {
+  const next: ViewPrefs = {
+    ...prefs,
+    customOrder: { ...prefs.customOrder, [boardId]: order },
   };
   saveViewPrefs(next);
   return next;

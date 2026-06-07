@@ -322,6 +322,22 @@ export function buildOrganizedEntries(
   return entries;
 }
 
+// ── 엔트리 식별 key (사용자정의 순서·React key 공용) ─────────────────────────
+
+/**
+ * DisplayEntry 의 안정적 식별 key.
+ * - group: `g:${groupKey ?? anchor.id}`  (멤버 집합이 같으면 동일 key)
+ * - single: `s:${anchor.id}`
+ *
+ * 사용자정의 순서 저장(viewPrefs.customOrder)과 UI React key 가 같은 규칙을
+ * 쓰도록 단일 출처로 둔다.
+ */
+export function entryKeyOf(entry: DisplayEntry): string {
+  return entry.kind === "group"
+    ? `g:${entry.groupKey ?? entry.anchor.id}`
+    : `s:${entry.anchor.id}`;
+}
+
 // ── 정렬: sortEntries ──────────────────────────────────────────────────────
 
 /**
@@ -330,12 +346,15 @@ export function buildOrganizedEntries(
  * - createdDesc(기본): anchor.createdAt 내림차순(최신 먼저)
  * - title: anchor 제목 localeCompare(ko). 제목 없으면 뒤로.
  * - updatedDesc: anchor.updatedAt 내림차순
+ * - custom: customOrder(엔트리 key 배열) 순서. 목록에 없는(새) 엔트리는 뒤로
+ *   밀고 createdDesc 로 tie-break.
  *
  * 모든 키에서 동률 시 createdAt desc → id 로 결정적 tie-break(안정).
  */
 export function sortEntries(
   entries: DisplayEntry[],
-  sortKey: OrganizedSortKey
+  sortKey: OrganizedSortKey,
+  customOrder?: string[]
 ): DisplayEntry[] {
   const arr = [...entries];
 
@@ -345,6 +364,21 @@ export function sortEntries(
     if (ca !== cb) return cb - ca; // createdAt desc
     return a.anchor.id < b.anchor.id ? -1 : a.anchor.id > b.anchor.id ? 1 : 0;
   };
+
+  if (sortKey === "custom") {
+    const rank = new Map<string, number>();
+    (customOrder ?? []).forEach((k, i) => {
+      if (!rank.has(k)) rank.set(k, i);
+    });
+    const UNKNOWN = Number.MAX_SAFE_INTEGER;
+    arr.sort((a, b) => {
+      const ra = rank.get(entryKeyOf(a)) ?? UNKNOWN;
+      const rb = rank.get(entryKeyOf(b)) ?? UNKNOWN;
+      if (ra !== rb) return ra - rb;
+      return finalTie(a, b); // 미등록(신규) 엔트리는 최신순으로 뒤에 붙음
+    });
+    return arr;
+  }
 
   if (sortKey === "title") {
     arr.sort((a, b) => {

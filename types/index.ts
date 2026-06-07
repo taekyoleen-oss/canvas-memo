@@ -192,8 +192,12 @@ export interface TableData {
 /** 보드 표시 모드 — 자유 배치 캔버스 / 읽기 최적화 정리 뷰 */
 export type OrganizedViewMode = "canvas" | "organized";
 
-/** 정리 뷰 정렬 기준 */
-export type OrganizedSortKey = "createdDesc" | "title" | "updatedDesc";
+/** 정리 뷰 정렬 기준 ("custom" = 사용자가 드래그로 정한 순서) */
+export type OrganizedSortKey =
+  | "createdDesc"
+  | "title"
+  | "updatedDesc"
+  | "custom";
 
 /** 표시용 엔트리 종류 (단일 모듈 / 그룹) */
 export type DisplayEntryKind = "single" | "group";
