@@ -7,6 +7,10 @@ import { boardsForWorkspace } from "@/lib/boardCategory";
 import { isModuleTypeAllowedOnBoard } from "@/lib/boardModulePolicy";
 import { useCanvasStore } from "@/store/canvas";
 import { useModuleClipboardStore } from "@/store/moduleClipboard";
+import {
+  moduleDataToPlainText,
+  writeTextToSystemClipboard,
+} from "@/lib/moduleClipboardText";
 import { useLongPress } from "@/hooks/useLongPress";
 import ModuleContextMenu from "@/components/ui-overlays/ModuleContextMenu";
 import ColorPalette from "@/components/ui-overlays/ColorPalette";
@@ -134,10 +138,12 @@ export default function OrganizedModuleMenu({
     onDeleted?.();
   }
 
-  /** 「내용만 복사」 — 타입·data만 내부 클립보드에 저장 */
+  /** 「내용만 복사」 — 앱 내부 클립보드 저장 + 시스템 클립보드(메모장 등)에 평문 복사 */
   function handleCopy() {
     if (!mod) return;
     copyToClipboard(mod.type, mod.data);
+    const text = moduleDataToPlainText(mod.type, mod.data);
+    void writeTextToSystemClipboard(text);
     setIsContextMenuOpen(false);
   }
 

@@ -22,6 +22,10 @@ import { useCanvasStore } from "@/store/canvas";
 import { useConnectionStore } from "@/store/connection";
 import { useModuleClipboardStore } from "@/store/moduleClipboard";
 import { getImageSrcs, appendImageSrcs } from "@/lib/imageData";
+import {
+  moduleDataToPlainText,
+  writeTextToSystemClipboard,
+} from "@/lib/moduleClipboardText";
 import ImageModuleHeaderCopy from "./ImageModuleHeaderCopy";
 import { useImageClipboardStore } from "@/store/imageClipboard";
 import { useLongPress } from "@/hooks/useLongPress";
@@ -460,9 +464,11 @@ export default function ModuleCardWrapper({
     onDeselect();
   }
 
-  /** 「내용만 복사」— 타입·data만 내부 클립보드에 저장 (붙여넣기용) */
+  /** 「내용만 복사」— 앱 내부 클립보드에 저장 + 시스템 클립보드(메모장 등)에 평문 복사 */
   function handleCopy() {
     copyToClipboard(module.type, module.data);
+    const text = moduleDataToPlainText(module.type, module.data);
+    void writeTextToSystemClipboard(text);
     setIsContextMenuOpen(false);
   }
 
