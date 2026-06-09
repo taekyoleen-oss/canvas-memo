@@ -781,48 +781,40 @@ export default function Home() {
         >
           <WorkspaceSwitcher />
           {activeBoardId ? (
-            isOrganized ? (
+            // 캔버스/정리 모드는 '정리되는 방식'만 다르고 모듈 추가·검색 등 도구는 동일하게 노출.
+            // 정리 모드에서는 정렬(SortMenu)을 추가로 보여준다.
+            <div className="flex w-full items-stretch" style={{ background: "var(--surface)" }}>
+              <div className="min-w-0 flex-1">
+                <ModuleToolbar
+                  boardCategory={activeBoardCategory}
+                  onAdd={handleAddModule}
+                  onSearch={() => setShowSearch(true)}
+                  onMapTemplates={
+                    activeBoardCategory === "thinking"
+                      ? () => setMapTemplateDialogOpen(true)
+                      : undefined
+                  }
+                  onStartMerge={requestMergeOrder}
+                  canMerge={canMergeOrder}
+                  variant="inline"
+                />
+              </div>
               <div
-                className="flex min-h-[48px] items-center gap-2 px-4"
-                style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}
+                className="flex flex-shrink-0 items-center gap-1 px-2"
+                style={{ borderBottom: "1px solid var(--border)" }}
               >
+                {isOrganized ? (
+                  <SortMenu
+                    sortKey={activeSortKey}
+                    onChange={(k) => setSortKey(activeBoardId, k)}
+                  />
+                ) : null}
                 <ViewModeToggle
                   mode={activeViewMode}
                   onChange={(m) => setViewMode(activeBoardId, m)}
                 />
-                <SortMenu
-                  sortKey={activeSortKey}
-                  onChange={(k) => setSortKey(activeBoardId, k)}
-                />
               </div>
-            ) : (
-              <div className="flex w-full items-stretch" style={{ background: "var(--surface)" }}>
-                <div className="min-w-0 flex-1">
-                  <ModuleToolbar
-                    boardCategory={activeBoardCategory}
-                    onAdd={handleAddModule}
-                    onSearch={() => setShowSearch(true)}
-                    onMapTemplates={
-                      activeBoardCategory === "thinking"
-                        ? () => setMapTemplateDialogOpen(true)
-                        : undefined
-                    }
-                    onStartMerge={requestMergeOrder}
-                    canMerge={canMergeOrder}
-                    variant="inline"
-                  />
-                </div>
-                <div
-                  className="flex flex-shrink-0 items-center px-2"
-                  style={{ borderBottom: "1px solid var(--border)" }}
-                >
-                  <ViewModeToggle
-                    mode={activeViewMode}
-                    onChange={(m) => setViewMode(activeBoardId, m)}
-                  />
-                </div>
-              </div>
-            )
+            </div>
           ) : null}
         </div>
         <div className="flex-1 relative overflow-hidden">
@@ -909,36 +901,41 @@ export default function Home() {
               </button>
             </div>
             {activeBoardId ? (
-              isOrganized ? (
-                <div
-                  className="flex min-h-[48px] items-center gap-2 px-4"
-                  style={{ background: "var(--surface)" }}
-                >
-                  <span
-                    className="text-xs font-medium"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    정리 뷰
-                  </span>
-                  <SortMenu
-                    sortKey={activeSortKey}
-                    onChange={(k) => setSortKey(activeBoardId, k)}
+              // 캔버스/정리 모드 동일한 모듈 도구. 정리 모드에서만 정렬(SortMenu)을 우측에 추가.
+              <div className="flex w-full items-stretch" style={{ background: "var(--surface)" }}>
+                <div className="min-w-0 flex-1">
+                  <ModuleToolbar
+                    boardCategory={activeBoardCategory}
+                    onAdd={handleAddModule}
+                    onSearch={() => setShowSearch(true)}
+                    onMapTemplates={
+                      activeBoardCategory === "thinking"
+                        ? () => setMapTemplateDialogOpen(true)
+                        : undefined
+                    }
+                    onStartMerge={requestMergeOrder}
+                    canMerge={canMergeOrder}
+                    variant="inline"
                   />
                 </div>
-              ) : (
-                <ModuleToolbar
-                  boardCategory={activeBoardCategory}
-                  onAdd={handleAddModule}
-                  onSearch={() => setShowSearch(true)}
-                  onMapTemplates={
-                    activeBoardCategory === "thinking"
-                      ? () => setMapTemplateDialogOpen(true)
-                      : undefined
-                  }
-                  onStartMerge={requestMergeOrder}
-                  canMerge={canMergeOrder}
-                />
-              )
+                {isOrganized ? (
+                  <div
+                    className="flex flex-shrink-0 items-center gap-2 px-3"
+                    style={{ borderBottom: "1px solid var(--border)" }}
+                  >
+                    <span
+                      className="text-xs font-medium"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      정렬
+                    </span>
+                    <SortMenu
+                      sortKey={activeSortKey}
+                      onChange={(k) => setSortKey(activeBoardId, k)}
+                    />
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div
                 className="flex min-h-[48px] flex-1 items-center px-4 text-xs font-medium"

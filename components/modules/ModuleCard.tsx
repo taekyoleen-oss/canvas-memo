@@ -74,8 +74,10 @@ export default function ModuleCard({
   const [headerIconHover, setHeaderIconHover] = useState(false);
 
   useEffect(() => {
-    if (!module.isExpanded || isMinimized) setIsTitleEditing(false);
-  }, [module.isExpanded, isMinimized]);
+    // 최소화 상태에서만 제목 편집을 강제로 끈다.
+    // (접힌 상태에서도 헤더 제목을 더블클릭해 바로 편집할 수 있어야 하므로 isExpanded 는 보지 않음)
+    if (isMinimized) setIsTitleEditing(false);
+  }, [isMinimized]);
   const bgColor = COLOR_MAP[module.color] ?? "var(--module-default)";
   const rawShape: ModuleShape = module.shape ?? "rounded";
   const shape: ModuleShape = simpleExterior
@@ -180,7 +182,7 @@ export default function ModuleCard({
             {headerIconOverride ?? MODULE_TYPE_ICON[module.type]}
           </span>
         </div>
-        {module.isExpanded && !isMinimized && onTitleChange ? (
+        {!isMinimized && onTitleChange ? (
           isTitleEditing ? (
             <input
               type="text"

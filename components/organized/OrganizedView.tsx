@@ -183,7 +183,7 @@ export default function OrganizedView({ board, onSwitchToCanvas }: OrganizedView
           >
             이 보드에는 아직 모듈이 없어요.
             <br />
-            캔버스에서 메모·일정·이미지 등을 추가해 보세요.
+            위 도구 모음에서 메모·일정·이미지 등을 바로 추가할 수 있어요.
           </p>
           <button
             type="button"
